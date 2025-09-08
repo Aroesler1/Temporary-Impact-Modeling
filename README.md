@@ -11,7 +11,6 @@ This repo builds an intraday liquidity curve from quote data, calibrates a **pie
 - **Modeling note** — estimating the flat cost $c$, intraday depth $D_t$, and tail exponent $p$, with plots and rationale.  
 - **Allocation note** — KKT-based algorithm with a bisection on the multiplier to hit the target $S$.  
 - **Notebook / code** — end-to-end data loading, P-spline smoothing, power-law fit, and final allocation.  
-- **Task PDF** — original problem statement for context.
 
 Key figures:
 
