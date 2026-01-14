@@ -1,0 +1,6 @@
+.DS_Store
+**/.DS_Store
+
+# Do not commit work trial data / artifacts
+Work_Trial/
+work_trial/
