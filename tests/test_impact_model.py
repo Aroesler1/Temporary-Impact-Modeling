@@ -131,3 +131,49 @@ def test_allocator_matches_greedy_discretization():
     greedy_cost = schedule_cost(x, Dt, c, p)
 
     assert kkt_cost <= greedy_cost * 1.001
+
+
+def test_risk_averse_matches_kkt_at_tiny_aversion():
+    from impact_model import allocate_schedule_risk_averse
+
+    rng = np.random.default_rng(7)
+    Dt = rng.uniform(100, 400, size=40)
+    c, p, S = 0.02, 0.45, 20000.0
+    x_kkt = allocate_schedule(Dt, c, p, S)
+    x_ra = allocate_schedule_risk_averse(Dt, c, p, S, sigma_per_minute=0.02, risk_aversion=1e-12)
+    assert np.isclose(x_ra.sum(), S)
+    assert abs(schedule_cost(x_ra, Dt, c, p) - schedule_cost(x_kkt, Dt, c, p)) < 0.01 * schedule_cost(x_kkt, Dt, c, p)
+
+
+def test_risk_aversion_front_loads_execution():
+    from impact_model import allocate_schedule_risk_averse, inventory_path
+
+    Dt = np.full(60, 200.0)
+    c, p, S = 0.02, 0.45, 30000.0
+    halves = []
+    for lam in (1e-8, 1e-6, 1e-4):
+        x = allocate_schedule_risk_averse(Dt, c, p, S, sigma_per_minute=0.02, risk_aversion=lam)
+        halves.append(int(np.argmax(np.cumsum(x) >= 0.5 * S)))
+    # stronger risk aversion completes half the order strictly sooner
+    assert halves[0] >= halves[1] >= halves[2]
+    assert halves[2] < halves[0]
+
+    # and sheds inventory variance at higher impact cost
+    x_lo = allocate_schedule_risk_averse(Dt, c, p, S, 0.02, 1e-8)
+    x_hi = allocate_schedule_risk_averse(Dt, c, p, S, 0.02, 1e-4)
+    var_lo = (inventory_path(x_lo, S) ** 2).sum()
+    var_hi = (inventory_path(x_hi, S) ** 2).sum()
+    assert var_hi < var_lo
+    assert schedule_cost(x_hi, Dt, c, p) > schedule_cost(x_lo, Dt, c, p)
+
+
+def test_baselines_never_beat_risk_neutral_optimum():
+    from impact_model import compare_schedules
+
+    rng = np.random.default_rng(9)
+    Dt = rng.uniform(150, 500, size=90)
+    c, p, S = 0.03, 0.5, 40000.0
+    table = compare_schedules(Dt, c, p, S, sigma_per_minute=0.02, risk_aversions=(1e-6,))
+    costs = table.set_index("schedule")["impact_cost"]
+    assert costs["kkt_risk_neutral"] <= costs["TWAP"] + 1e-9
+    assert costs["kkt_risk_neutral"] <= costs["depth_proportional"] + 1e-9

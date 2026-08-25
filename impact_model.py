@@ -210,3 +210,106 @@ def schedule_cost(x: np.ndarray, Dt: np.ndarray, c: float, p: float) -> float:
     a = c / Dt**p
     g = np.where(x <= Dt, c, a * np.maximum(x, 1e-300) ** p)
     return float((x * g).sum())
+
+
+def inventory_path(x: np.ndarray, S: float) -> np.ndarray:
+    """Remaining inventory after each minute's trade."""
+    return S - np.cumsum(np.asarray(x, dtype=float))
+
+
+def allocate_schedule_risk_averse(
+    Dt: np.ndarray,
+    c: float,
+    p: float,
+    S: float,
+    sigma_per_minute: float,
+    risk_aversion: float,
+    max_iter: int = 400,
+) -> np.ndarray:
+    """Mean-variance optimal schedule (Almgren-Chriss objective) under the
+    piecewise temporary-impact model:
+
+        min_x  sum_t x_t g_t(x_t) + lambda * sigma^2 * sum_t I_t^2
+        s.t.   sum_t x_t = S,  x_t >= 0,   I_t = S - sum_{s<=t} x_s
+
+    The impact term is convex (marginal cost is non-decreasing) and the risk
+    term is convex quadratic in cumulative sums, so the problem is convex;
+    scipy SLSQP with an analytic gradient and the risk-neutral KKT solution
+    as warm start converges reliably. risk_aversion = 0 recovers
+    `allocate_schedule`; larger values front-load execution to shed
+    inventory variance at higher impact cost.
+    """
+    from scipy.optimize import minimize
+
+    Dt = np.asarray(Dt, dtype=float)
+    a = c / Dt**p
+    lam_sig2 = risk_aversion * sigma_per_minute**2
+    T = len(Dt)
+
+    def objective(x: np.ndarray) -> float:
+        cost = schedule_cost(x, Dt, c, p)
+        inv = inventory_path(x, S)
+        return cost + lam_sig2 * float((inv**2).sum())
+
+    def grad(x: np.ndarray) -> np.ndarray:
+        marginal = np.where(x <= Dt, c, (1.0 + p) * a * np.maximum(x, 1e-12) ** p)
+        inv = inventory_path(x, S)
+        # d/dx_s of sum_t I_t^2 = -2 * sum_{t >= s} I_t
+        risk_grad = -2.0 * lam_sig2 * np.cumsum(inv[::-1])[::-1]
+        return marginal + risk_grad
+
+    x0 = allocate_schedule(Dt, c, p, S)
+    result = minimize(
+        objective,
+        x0,
+        jac=grad,
+        bounds=[(0.0, None)] * T,
+        constraints=[{"type": "eq", "fun": lambda x: x.sum() - S,
+                      "jac": lambda x: np.ones(T)}],
+        method="SLSQP",
+        options={"maxiter": max_iter, "ftol": 1e-12},
+    )
+    x = np.clip(result.x, 0.0, None)
+    return x * (S / x.sum())
+
+
+def compare_schedules(
+    Dt: np.ndarray,
+    c: float,
+    p: float,
+    S: float,
+    sigma_per_minute: float,
+    risk_aversions: Sequence[float] = (0.0, 1e-6, 1e-5),
+) -> pd.DataFrame:
+    """Cost/risk table for standard baselines and mean-variance schedules.
+
+    Baselines: TWAP (flat), depth-proportional (VWAP proxy using D_t as the
+    intraday liquidity curve), risk-neutral KKT optimum, and Almgren-Chriss
+    schedules across `risk_aversions`.
+    """
+    Dt = np.asarray(Dt, dtype=float)
+    T = len(Dt)
+
+    schedules: dict[str, np.ndarray] = {
+        "TWAP": np.full(T, S / T),
+        "depth_proportional": Dt * (S / Dt.sum()),
+        "kkt_risk_neutral": allocate_schedule(Dt, c, p, S),
+    }
+    for lam in risk_aversions:
+        if lam > 0:
+            schedules[f"almgren_chriss_lam={lam:g}"] = allocate_schedule_risk_averse(
+                Dt, c, p, S, sigma_per_minute, lam)
+
+    rows = []
+    for name, x in schedules.items():
+        inv = inventory_path(x, S)
+        rows.append(
+            {
+                "schedule": name,
+                "impact_cost": schedule_cost(x, Dt, c, p),
+                "inventory_variance": sigma_per_minute**2 * float((inv**2).sum()),
+                "peak_minute_share": float(x.max() / S),
+                "half_life_minutes": int(np.argmax(np.cumsum(x) >= 0.5 * S)),
+            }
+        )
+    return pd.DataFrame(rows)
