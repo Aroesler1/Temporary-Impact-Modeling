@@ -4,3 +4,6 @@
 # Do not commit work trial data / artifacts
 Work_Trial/
 work_trial/
+
+__pycache__/
+*.py[cod]

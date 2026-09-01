@@ -17,8 +17,21 @@ This repo builds an intraday liquidity curve from quote data, calibrates a **pie
 
 - **Scale-free pooling.** The notebook pooled (shares, \$/share premium) pairs across SOUN/FROG/CRWV directly; different price levels and depth scales bias the pooled exponent. `impact_model.walk_book_premiums` normalizes premiums to basis points of the best ask and sizes to multiples of each symbol's median top-of-book depth before pooling (a unit test shows raw-dollar pooling distorts a known exponent while normalized pooling recovers it).
 - **Uncertainty.** `fit_power_law` reports a symbol-block bootstrap 95% CI for $p$, not just a point estimate.
-- **Scope, stated honestly.** Walking displayed snapshots measures the *virtual instantaneous* cost of consuming visible liquidity. Realized metaorder impact additionally reflects hidden liquidity, queue refill, and adverse selection, and empirically scales with participation of traded volume (the square-root law, impact $\approx \sigma\sqrt{Q/V}$). The calibrated curve here is a displayed-liquidity lower bound. Natural extensions: reformulate $g_t$ in participation of the minute-volume curve, add an Almgren-Chriss risk term, and compare the schedule against TWAP/VWAP/POV baselines.
+- **Scope, stated honestly.** Walking displayed snapshots measures the *virtual instantaneous* cost of consuming visible liquidity. Realized metaorder impact additionally reflects hidden liquidity, queue refill, and adverse selection. The calibrated curve here is a displayed-liquidity lower bound, not a fitted metaorder impact curve — see the section below on which square-root law this can and cannot speak to.
 - **Allocator verified.** The per-minute cost is convex (marginal cost steps from $c$ to $(1+p)c$ at $D_t$), so the KKT/bisection solution is globally optimal; tests confirm no pairwise mass transfer improves it and that it matches a fine greedy marginal-cost discretization. The flat-region allocation is degenerate; proportional-to-$D_t$ is the documented tie-break.
+
+### Which square-root law this estimator can speak to
+
+"The square-root law" is really two distinct statements, and conflating them is the usual error. Durin, Rosenbaum and co-authors ([arXiv 2311.18283](https://arxiv.org/abs/2311.18283)) separate them:
+
+1. **In cumulated volume.** *During* execution of a metaorder, impact grows as the square root of the volume executed so far.
+2. **In participation rate.** For a *given* total executed volume $Q$, impact scales as $\sqrt{\gamma}$ in the participation rate $\gamma$, once $\gamma$ is large enough.
+
+The exponent fitted here ($\hat{p} \approx 0.45$) is **neither**. It is the concavity of the cost of walking a *static displayed book* against order size: a cross-sectional depth-profile property measured at an instant. It has no time dimension, so it cannot express law 1, and it is indexed by shares rather than by participation in contemporaneous volume, so it cannot express law 2. That $\hat{p}$ lands near $1/2$ is suggestive of common liquidity structure, but it is not confirmation of either law, and this repo does not claim it is.
+
+Evidence for the laws themselves is now strong: a complete survey of the Tokyo Stock Exchange finds square-root scaling across all liquid stocks over eight years ([arXiv 2411.13965](https://arxiv.org/abs/2411.13965)), and Maitrier and Bouchaud ([arXiv 2506.07711](https://arxiv.org/abs/2506.07711)) give a framework reconciling impact, order imbalance and volatility.
+
+Reaching those laws from here needs metaorders, not snapshots: reconstructing proxy metaorders from public data ([arXiv 2503.18199](https://arxiv.org/abs/2503.18199)) and re-indexing $g_t$ on participation of the minute-volume curve. That is the natural next build, alongside a transient-impact propagator — calibrated by regressing returns on lagged signed volumes across multiple lags and choosing kernel parameters to maximise out-of-sample $R^2$ — to replace the memoryless cost model with one that has resilience.
 
 ### Risk-averse extension (Almgren-Chriss)
 
