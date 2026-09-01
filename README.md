@@ -33,6 +33,55 @@ Evidence for the laws themselves is now strong: a complete survey of the Tokyo S
 
 Reaching those laws from here needs metaorders, not snapshots: reconstructing proxy metaorders from public data ([arXiv 2503.18199](https://arxiv.org/abs/2503.18199)) and re-indexing $g_t$ on participation of the minute-volume curve. That is the natural next build, alongside a transient-impact propagator — calibrated by regressing returns on lagged signed volumes across multiple lags and choosing kernel parameters to maximise out-of-sample $R^2$ — to replace the memoryless cost model with one that has resilience.
 
+## Transient-impact propagator, calibrated on real order flow (2026-08)
+
+The piecewise model above is **memoryless**: cost at minute t depends only on
+size at t. Real impact decays instead of vanishing. `propagator.py` calibrates
+the Bouchaud-style kernel
+
+    r_t  =  sum_{l=0..L} G(l) * sign(v_{t-l}) * |v_{t-l}|^delta  +  noise
+
+directly from data, on one second bars of MSFT 2024-06-03 built from Databento
+`XNAS.ITCH` MBO (23,390 regular-session seconds; signed volume from book-affecting
+fills, mid from a reconstructed book). Kernel parameters are selected by
+out-of-sample R^2 on a chronological 70/30 split — nothing is fitted on the
+evaluation window.
+
+| specification | best delta | best lags | out-of-sample R² |
+|---|---|---|---|
+| **explanatory** (contemporaneous flow included) | 0.25 | 60 | **0.371** |
+| memoryless (L = 0, same delta) | 0.25 | 0 | 0.369 |
+| **predictive** (lags ≥ 1 only) | 1.0 | 20 | **0.0043** |
+
+Three findings, all reported as they came out:
+
+1. **Signed order flow explains 37% of contemporaneous one-second returns.**
+   That is impact, and it is large.
+2. **It predicts almost nothing.** Dropping the contemporaneous term collapses
+   out-of-sample R² by a factor of **87**, to 0.4%. Contemporaneous explanatory
+   power is not tradeable signal, and conflating the two is the standard error
+   this table exists to prevent. The pattern matches Cont, Cucuringu and Zhang
+   on order flow imbalance: strong contemporaneous relation, weak and
+   fast-decaying predictive one.
+3. **At one-second resolution the kernel has essentially already decayed.**
+   Adding 60 lags of history improves the explanatory model by only +0.0017 R²,
+   and G(1) is already about 6% of G(0) with the opposite sign. Transient impact
+   is real, but at this sampling frequency the relaxation has mostly happened
+   inside the first bucket.
+
+Caveats that bound all three: one instrument, one session, and one-second
+buckets. The propagator literature usually works in trade or event time, where
+slower decay is visible; a one-second grid may simply be too coarse to resolve
+it. The fitted delta of 0.25 is more concave than the square-root form, but this
+is aggregated interval flow, not metaorders, so it is not a measurement of the
+square-root law either.
+
+Reproduce:
+
+```bash
+python scripts/run_propagator.py --data data/MSFT_2024-06-03_1s.csv
+```
+
 ### Risk-averse extension (Almgren-Chriss)
 
 `impact_model.allocate_schedule_risk_averse` extends the static KKT schedule with the Almgren-Chriss mean-variance objective (impact cost plus $\lambda\sigma^2\sum_t I_t^2$ on remaining inventory), solved as a convex program warm-started from the risk-neutral optimum. `scripts/compare_schedules_demo.py` regenerates `figs/schedule_comparison.png` and a cost/risk table against TWAP and depth-proportional baselines, and exposes a non-obvious property of the piecewise model:
