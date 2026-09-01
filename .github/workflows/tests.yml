@@ -1,0 +1,29 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest numpy pandas scipy matplotlib
+
+      # The suite is deliberately offline: no test reads a vendor API, a
+      # database, or a credential. Anything needing licensed data is exercised
+      # against fixtures instead, so CI proves the logic without proving that
+      # a secret was configured.
+      - name: Run tests
+        run: python -m pytest tests -q
