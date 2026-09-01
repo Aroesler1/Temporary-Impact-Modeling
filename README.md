@@ -33,6 +33,55 @@ Evidence for the laws themselves is now strong: a complete survey of the Tokyo S
 
 Reaching those laws from here needs metaorders, not snapshots: reconstructing proxy metaorders from public data ([arXiv 2503.18199](https://arxiv.org/abs/2503.18199)) and re-indexing $g_t$ on participation of the minute-volume curve. That is the natural next build, alongside a transient-impact propagator — calibrated by regressing returns on lagged signed volumes across multiple lags and choosing kernel parameters to maximise out-of-sample $R^2$ — to replace the memoryless cost model with one that has resilience.
 
+## Testing the square-root law on reconstructed metaorders (2026-09)
+
+The section above explains why the static book-walk exponent tests *neither*
+square-root law. `metaorder_impact.py` closes that gap by measuring impact
+against **participation rate**, which is the quantity law 2 is stated in.
+
+Metaorders are reconstructed from Databento MBO following the public-data
+approach ([arXiv 2503.18199](https://arxiv.org/abs/2503.18199)): a proxy
+metaorder is a maximal run of consecutive same-signed fills, since real
+metaorders arrive as bursts of one-sided pressure and a run is the closest
+observable analogue on anonymous data. Impact is the signed mid change from
+immediately before the run to immediately after, normalised by daily volatility.
+
+MSFT 2024-06-03, 9,439 reconstructed metaorders:
+
+| participation γ | impact / σ | n |
+|---|---|---|
+| 0.0000021 | 0.00043 | 761 |
+| 0.0000110 | 0.00367 | 787 |
+| 0.0000430 | 0.01029 | 789 |
+| 0.0000950 | 0.01656 | 783 |
+| 0.0002570 | 0.02375 | 787 |
+
+**Fitted exponent 0.788, R² 0.948** across 12 bins. Impact is clearly concave —
+a 100× increase in participation produces roughly a 5× increase in impact — and
+the relationship is remarkably clean. But the exponent sits well above the
+square-root law's 0.5.
+
+The honest reading is that this measures a **different regime**, not a refutation.
+Participation here spans roughly 1e-6 to 3e-3, two to four orders of magnitude
+below the range where the square-root law is documented. At very small
+participation an order consumes a locally near-linear book, and the pronounced
+concavity emerges as size grows; an exponent between 0.5 and 1 is what that
+crossover looks like.
+
+Two further limits: proxy metaorders merge concurrent participants trading the
+same way and split a single participant who pauses, and this is one instrument
+on one session.
+
+The estimator is fitted on **bin means**, not raw observations, and the tests
+pin why that matters: conditioning on positive impact — which superficially
+"cleans up" the data — selects on the dependent variable and biases the
+exponent. One test exists purely to demonstrate that bias and fail if the
+estimator ever starts filtering.
+
+```bash
+python scripts/run_metaorder_impact.py
+```
+
 ## Transient-impact propagator, calibrated on real order flow (2026-08)
 
 The piecewise model above is **memoryless**: cost at minute t depends only on
