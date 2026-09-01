@@ -11,6 +11,27 @@ This repo builds an intraday liquidity curve from quote data, calibrates a **pie
 - **Modeling note** — estimating the flat cost $c$, intraday depth $D_t$, and tail exponent $p$, with plots and rationale.  
 - **Allocation note** — KKT-based algorithm with a bisection on the multiplier to hit the target $S$.  
 - **Notebook / code** — end-to-end data loading, P-spline smoothing, power-law fit, and final allocation.  
+- **`impact_model.py` + `tests/`** — vectorized, tested implementations (2026-08 revision): book-walk premiums without Python loops, scale-free cross-symbol pooling, bootstrap CIs for the exponent, and the KKT allocator with optimality tests. Runs on a synthetic MBP-10 fixture, no proprietary data needed.
+
+## 2026-08 revision notes
+
+- **Scale-free pooling.** The notebook pooled (shares, \$/share premium) pairs across SOUN/FROG/CRWV directly; different price levels and depth scales bias the pooled exponent. `impact_model.walk_book_premiums` normalizes premiums to basis points of the best ask and sizes to multiples of each symbol's median top-of-book depth before pooling (a unit test shows raw-dollar pooling distorts a known exponent while normalized pooling recovers it).
+- **Uncertainty.** `fit_power_law` reports a symbol-block bootstrap 95% CI for $p$, not just a point estimate.
+- **Scope, stated honestly.** Walking displayed snapshots measures the *virtual instantaneous* cost of consuming visible liquidity. Realized metaorder impact additionally reflects hidden liquidity, queue refill, and adverse selection, and empirically scales with participation of traded volume (the square-root law, impact $\approx \sigma\sqrt{Q/V}$). The calibrated curve here is a displayed-liquidity lower bound. Natural extensions: reformulate $g_t$ in participation of the minute-volume curve, add an Almgren-Chriss risk term, and compare the schedule against TWAP/VWAP/POV baselines.
+- **Allocator verified.** The per-minute cost is convex (marginal cost steps from $c$ to $(1+p)c$ at $D_t$), so the KKT/bisection solution is globally optimal; tests confirm no pairwise mass transfer improves it and that it matches a fine greedy marginal-cost discretization. The flat-region allocation is degenerate; proportional-to-$D_t$ is the documented tie-break.
+
+### Risk-averse extension (Almgren-Chriss)
+
+`impact_model.allocate_schedule_risk_averse` extends the static KKT schedule with the Almgren-Chriss mean-variance objective (impact cost plus $\lambda\sigma^2\sum_t I_t^2$ on remaining inventory), solved as a convex program warm-started from the risk-neutral optimum. `scripts/compare_schedules_demo.py` regenerates `figs/schedule_comparison.png` and a cost/risk table against TWAP and depth-proportional baselines, and exposes a non-obvious property of the piecewise model:
+
+- **Small orders (inside the flat region):** every schedule pays the same flat cost $cS$, so risk aversion is *free*; the AC schedule cuts inventory variance ~10x at zero extra impact cost. The flat-region degeneracy of the risk-neutral problem is exactly what the risk term resolves.
+- **Large orders (tail engaged):** a genuine tradeoff appears, e.g. $\lambda=10^{-5}$ cuts inventory variance ~5x for ~61% more impact cost.
+
+Run the tests:
+
+```bash
+python -m pytest tests -q
+```
 
 Key figures:
 
