@@ -70,7 +70,31 @@ crossover looks like.
 
 Two further limits: proxy metaorders merge concurrent participants trading the
 same way and split a single participant who pauses, and this is one instrument
-on one session.
+on one session — the propagator above now covers two, this section does not.
+
+That reconstruction difficulty is itself a documented result rather than a
+private worry. Naviglio, Bormetti, Campigli, Rodikov and Lillo
+([arXiv 2501.17096](https://arxiv.org/abs/2501.17096)) ask directly why
+estimating metaorder impact from public market data is so hard, and find that
+models fitted to anonymised public flow produce price trajectories that are
+*linear* during execution rather than concave, with too little post-execution
+reversion, because they misspecify where order-flow autocorrelation comes from.
+The proxy-metaorder construction used here inherits exactly that exposure: a
+maximal same-signed run is an assumption about which fills share a parent, and
+that assumption is the thing their paper shows is load-bearing. The exponent of
+0.788 above should be read with that in mind.
+
+> **Data provenance caveat (2026-09).** `data/MSFT_2024-06-03_metaorders.csv`
+> predates the execution-mirror-cancel fix in the sibling `lob-engine-cpp`
+> repository and has **not** been rebuilt. That fix changed the reconstructed
+> book, and rebuilding the one-second series in this repo moved 253 of its
+> 23,390 mid values (explanatory R² 0.371 → 0.366). The metaorder file's
+> `mid_start` / `mid_end` columns are derived from the same book and are
+> therefore likely affected in the same way. It is flagged rather than silently
+> corrected because, unlike the one-second series, this repo has no committed
+> builder for it, so its exact construction cannot be verified and re-deriving
+> it would mean guessing at the original convention. Treat the 0.788 exponent as
+> provisional pending a rebuild from a committed script.
 
 The estimator is fitted on **bin means**, not raw observations, and the tests
 pin why that matters: conditioning on positive impact — which superficially
@@ -82,7 +106,7 @@ estimator ever starts filtering.
 python scripts/run_metaorder_impact.py
 ```
 
-## Transient-impact propagator, calibrated on real order flow (2026-08)
+## Transient-impact propagator, calibrated on two sessions (2026-09)
 
 The piecewise model above is **memoryless**: cost at minute t depends only on
 size at t. Real impact decays instead of vanishing. `propagator.py` calibrates
@@ -90,45 +114,81 @@ the Bouchaud-style kernel
 
     r_t  =  sum_{l=0..L} G(l) * sign(v_{t-l}) * |v_{t-l}|^delta  +  noise
 
-directly from data, on one second bars of MSFT 2024-06-03 built from Databento
-`XNAS.ITCH` MBO (23,390 regular-session seconds; signed volume from book-affecting
-fills, mid from a reconstructed book). Kernel parameters are selected by
-out-of-sample R^2 on a chronological 70/30 split — nothing is fitted on the
-evaluation window.
+directly from data, on one-second bars built from Databento `XNAS.ITCH` MBO
+(signed volume from book-affecting fills, mid from a reconstructed book).
+Kernel parameters are selected by out-of-sample R² on a chronological 70/30
+split — nothing is fitted on the evaluation window, and both sessions use the
+identical grid and split so they are comparable by construction.
 
-| specification | best delta | best lags | out-of-sample R² |
-|---|---|---|---|
-| **explanatory** (contemporaneous flow included) | 0.25 | 60 | **0.371** |
-| memoryless (L = 0, same delta) | 0.25 | 0 | 0.369 |
-| **predictive** (lags ≥ 1 only) | 1.0 | 20 | **0.0043** |
+The second session is chosen to be a different kind of book, not a second day of
+the same one: MSFT trades at $415 with a one-tick spread 1.0% of the time and
+63-68 shares at the touch, while INTC 2024-08-02 trades at $21 with a
+one-tick spread 81.1% of the time and 2,400-3,000 shares at the touch. One is
+small-tick and spread-dominated, the other large-tick and queue-dominated.
 
-Three findings, all reported as they came out:
+| | MSFT 2024-06-03 | INTC 2024-08-02 |
+|---|---:|---:|
+| one-second bars | 23,390 | 23,394 |
+| **explanatory** OOS R² (contemporaneous flow included) | **0.36599** | **0.43229** |
+| — best delta / lags | 0.25 / 60 | 0.25 / 0 |
+| memoryless (L = 0, same delta) | 0.36440 | 0.43229 |
+| gain from lagged history | +0.00160 | +0.00000 |
+| **predictive** OOS R² (lags ≥ 1 only) | **0.00423** | **0.00455** |
+| — best delta / lags | 1.0 / 20 | 0.25 / 10 |
+| explanatory / predictive ratio | **86x** | **95x** |
 
-1. **Signed order flow explains 37% of contemporaneous one-second returns.**
-   That is impact, and it is large.
-2. **It predicts almost nothing.** Dropping the contemporaneous term collapses
-   out-of-sample R² by a factor of **87**, to 0.4%. Contemporaneous explanatory
-   power is not tradeable signal, and conflating the two is the standard error
-   this table exists to prevent. The pattern matches Cont, Cucuringu and Zhang
-   on order flow imbalance: strong contemporaneous relation, weak and
-   fast-decaying predictive one.
-3. **At one-second resolution the kernel has essentially already decayed.**
-   Adding 60 lags of history improves the explanatory model by only +0.0017 R²,
-   and G(1) is already about 6% of G(0) with the opposite sign. Transient impact
-   is real, but at this sampling frequency the relaxation has mostly happened
-   inside the first bucket.
+The MSFT explanatory figure was **0.371 before 2026-09 and is 0.36599 now**. The
+change is not a re-fit: the committed one-second series had been built from a
+message stream that predated the execution-mirror-cancel fix in the sibling
+`lob-engine-cpp` repository, which double-decremented resting orders on every
+displayed fill and corrupted 253 of the 23,390 mid values. Rebuilding it from
+the corrected book moved the number. `signed_vol` was unaffected, since that
+column reads only displayed-fill events, which the fix does not touch. This is
+also why `scripts/build_1s_bars.py` now exists: the series had no committed
+builder, which is exactly how a stale input survives unnoticed.
 
-Caveats that bound all three: one instrument, one session, and one-second
+Four findings, all reported as they came out:
+
+1. **Signed order flow explains 37% of contemporaneous one-second returns on
+   MSFT and 43% on INTC.** That is impact, and it is large. It is also stable across a
+   40x difference in touch depth and a 19x difference in price, which one
+   session could not have established.
+2. **It predicts almost nothing, on either.** Dropping the contemporaneous term
+   collapses out-of-sample R² by a factor of **86** on MSFT and **95** on INTC,
+   to under half a percent both times. Contemporaneous explanatory power is not
+   tradeable signal, and conflating the two is the standard error this table
+   exists to prevent. The pattern matches Cont, Cucuringu and Zhang on order
+   flow imbalance: strong contemporaneous relation, weak and fast-decaying
+   predictive one.
+3. **At one-second resolution the kernel has already decayed — and the second
+   session makes that sharper, not weaker.** On MSFT, adding 60 lags of history
+   buys +0.0016 R²; on INTC the selected model has **zero** lags and history
+   adds nothing at all to five decimal places. Transient impact is real, but at
+   this sampling frequency the relaxation has essentially finished inside the
+   first bucket, and the more heavily queued book is the one where it is most
+   completely finished.
+4. **The concavity exponent is identical across the two books.** Both select
+   delta = 0.25 for the explanatory fit. That is a stronger statement than
+   either session alone: the same degree of concavity in aggregated one-second
+   flow shows up in a $415 small-tick name and a $21 large-tick one.
+
+Caveats that bound all four: two instruments, two sessions, and one-second
 buckets. The propagator literature usually works in trade or event time, where
 slower decay is visible; a one-second grid may simply be too coarse to resolve
 it. The fitted delta of 0.25 is more concave than the square-root form, but this
 is aggregated interval flow, not metaorders, so it is not a measurement of the
-square-root law either.
+square-root law either — see Maitrier and Bouchaud
+([arXiv 2506.07711](https://arxiv.org/abs/2506.07711)) for the framework in
+which square-root metaorder impact, linear order-imbalance impact and diffusive
+prices are reconciled, which is the setting this measurement sits beside rather
+than inside.
 
-Reproduce:
+Reproduce (the bar series are committed; `build_1s_bars.py` regenerates them
+from a Databento extract):
 
 ```bash
 python scripts/run_propagator.py --data data/MSFT_2024-06-03_1s.csv
+python scripts/run_propagator.py --data data/INTC_2024-08-02_1s.csv
 ```
 
 ### Risk-averse extension (Almgren-Chriss)
