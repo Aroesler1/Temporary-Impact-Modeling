@@ -9,3 +9,7 @@ __pycache__/
 *.py[cod]
 
 .venv/
+
+# Cross-agent working notes. Kept locally, not published: it is scratch context
+# for whoever picks the work up next, not part of the repo.
+handoff.md
