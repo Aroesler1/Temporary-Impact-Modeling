@@ -52,10 +52,15 @@ class ImpactLawFit:
         return self.exponent < self.CONCAVITY_MARGIN
 
     def describe(self) -> str:
+        # "steeper" was wrong in both directions: an exponent below 0.5 is MORE
+        # concave than the square-root law, one above it is LESS. Naming the
+        # direction matters when the number is the headline result.
         verdict = (
             "concave, consistent with the square-root law"
             if 0.4 <= self.exponent <= 0.6
-            else "concave but steeper than the square-root law"
+            else "concave, and more so than the square-root law"
+            if self.exponent < 0.4
+            else "concave, but less so than the square-root law"
             if self.is_concave
             else "not concave"
         )

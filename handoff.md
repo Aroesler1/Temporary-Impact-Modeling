@@ -38,23 +38,47 @@ behind it**, so a stale input could not be detected. Closed by
 `scripts/build_1s_bars.py`, which reproduces the corrected MSFT series exactly
 and was verified against the committed file before being trusted.
 
-## Open item — the one thing left undone
+## Metaorder file: rebuilt (was the open item, now closed)
 
-`data/MSFT_2024-06-03_metaorders.csv` shares that stale lineage and has **not**
-been rebuilt. Its `mid_start` / `mid_end` come from the same book, so the 0.788
-exponent in the metaorder section is very likely affected the same way.
+`data/MSFT_2024-06-03_metaorders.csv` has been rebuilt by
+`scripts/build_metaorders.py`. **The fitted exponent moves 0.788 -> 0.370.**
 
-It was flagged rather than silently corrected because there is no committed
-builder for it and the recovered conventions do **not** reproduce it from either
-book (mid_start matched 8,354/9,439 against the stale book, 7,788/9,439 against
-the corrected one), so its exact construction cannot be verified and re-deriving
-it would mean guessing. Flagged in `README.md` and `DATA.md`.
+Recovering the construction found two defects in the original file, neither
+reproduced:
 
-**Next action if resumed:** write `scripts/build_metaorders.py` the same way the
-bar builder was written — recover the convention until it reproduces the
-committed file from the *stale* book, then re-run against the *corrected* book
-and report the movement. Anything less leaves a published exponent resting on a
-known-buggy input.
+1. Fills sharing a timestamp were reordered. The old file is not time-sorted --
+   it has a run starting 59 microseconds before the previous one ended, and it
+   splits one same-signed run into three. Message order is sequence order.
+2. `mid_start` was read AFTER the run's first fill instead of before it, silently
+   dropping that fill's impact from every metaorder. This is the change that
+   moves the number.
+
+Decomposition (same 12-bin fit):
+
+    committed file, as published                          0.788   R^2 0.948
+    rebuilt, pre-fix book,   mid 'at'  first fill         0.622   R^2 0.964
+    rebuilt, corrected book, mid 'at'  first fill         0.621   R^2 0.965
+    rebuilt, corrected book, mid 'before' the run         0.370   R^2 0.917
+
+**The execution-mirror-cancel fix is irrelevant here** -- 0.001 of exponent. The
+earlier provenance caveat blamed the wrong culprit; the mid convention is worth
+0.25 on its own. The residual 0.788 -> 0.622 is the reordering and cannot be
+decomposed further: no lookup convention reproduces the old file's mid columns
+better than 89% (row-index and timestamp-lookup variants both tried), so its
+construction is **not recoverable**.
+
+Reading of the new number: 0.370 is below the square-root 0.5, but this is NOT a
+refutation. A one-fill metaorder still moves the mid by ~half a tick, so impact
+does not fall toward zero as participation does; that discreteness floor lifts
+the smallest bins and biases the exponent down. The old `at` convention removed
+the floor by accident, which is why it read higher -- by discarding real impact.
+Between that floor and a participation range two to four orders of magnitude
+below where the law is documented, this session does not test the law cleanly in
+either direction. Written up as such.
+
+Also fixed: `ImpactLawFit.describe()` called an exponent below 0.5 "steeper than
+the square-root law", which is backwards -- below 0.5 is MORE concave, above is
+less. It now names the direction.
 
 ## Bar convention (recovered and pinned by tests)
 

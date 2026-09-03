@@ -46,31 +46,80 @@ metaorders arrive as bursts of one-sided pressure and a run is the closest
 observable analogue on anonymous data. Impact is the signed mid change from
 immediately before the run to immediately after, normalised by daily volatility.
 
-MSFT 2024-06-03, 9,439 reconstructed metaorders:
+MSFT 2024-06-03, 9,437 reconstructed metaorders:
 
 | participation γ | impact / σ | n |
-|---|---|---|
-| 0.0000021 | 0.00043 | 761 |
-| 0.0000110 | 0.00367 | 787 |
-| 0.0000430 | 0.01029 | 789 |
-| 0.0000950 | 0.01656 | 783 |
-| 0.0002570 | 0.02375 | 787 |
+|---|---:|---:|
+| 0.00000042 | 0.00283 | 882 |
+| 0.00000167 | 0.00306 | 761 |
+| 0.00001073 | 0.00564 | 787 |
+| 0.00004301 | 0.01196 | 790 |
+| 0.00009531 | 0.01824 | 783 |
+| 0.00025701 | 0.02527 | 787 |
 
-**Fitted exponent 0.788, R² 0.948** across 12 bins. Impact is clearly concave —
-a 100× increase in participation produces roughly a 5× increase in impact — and
-the relationship is remarkably clean. But the exponent sits well above the
-square-root law's 0.5.
+(6 of 12 bins; the full table is written to `reports/metaorder/impact_bins.csv`.)
 
-The honest reading is that this measures a **different regime**, not a refutation.
-Participation here spans roughly 1e-6 to 3e-3, two to four orders of magnitude
-below the range where the square-root law is documented. At very small
-participation an order consumes a locally near-linear book, and the pronounced
-concavity emerges as size grows; an exponent between 0.5 and 1 is what that
-crossover looks like.
+**Fitted exponent 0.370, R² 0.917** across 12 bins. Impact is clearly concave and
+the relationship is clean, but the exponent sits *below* the square-root law's
+0.5, not above it.
+
+### This number was 0.788 until 2026-09, and the change is a correction
+
+The earlier figure came from a committed CSV with **no builder behind it**.
+`scripts/build_metaorders.py` now reconstructs it from the message stream and
+the L1 book, and recovering the construction turned up two defects in the
+original file. Neither is reproduced.
+
+1. **Fills sharing a timestamp were reordered.** The old file is not sorted in
+   time: it contains a run beginning **59 microseconds before the previous run
+   ended**, and it splits one same-signed run into three because a later fill was
+   sorted ahead of two earlier ones. Order within a timestamp *is* the sequence
+   order and carries information. Building in message order gives 9,437 runs
+   against the old 9,439.
+2. **`mid_start` was read after the run's first fill rather than before it.**
+   The method is stated two paragraphs above as "the signed mid change from
+   immediately before the run to immediately after", and measuring from after the
+   first fill silently drops that fill's own impact from every metaorder. This is
+   the change that moves the number.
+
+Isolating them, on the same 12-bin fit:
+
+| variant | exponent | R² |
+|---|---:|---:|
+| committed file, as published | 0.788 | 0.948 |
+| rebuilt, pre-fix book, mid read *at* the first fill | 0.622 | 0.964 |
+| rebuilt, corrected book, mid read *at* the first fill | 0.621 | 0.965 |
+| **rebuilt, corrected book, mid read *before* the run** | **0.370** | **0.917** |
+
+Two things worth reading off that table. The **execution-mirror-cancel fix in the
+sibling repo turns out to be irrelevant here** — it moves the exponent by 0.001,
+so the provenance caveat this section used to carry was pointing at the wrong
+culprit. And the mid convention is worth 0.25 of exponent on its own. The
+remaining 0.788 → 0.622 gap is the reordering, and it cannot be decomposed
+further: no lookup convention tried reproduces the old file's mid columns better
+than 89%, so **its construction is not recoverable** and the published 0.788 was
+resting on a file nobody could regenerate.
+
+### Why below 0.5, and why that is not a clean test either
+
+The correction does not turn this into a refutation of the square-root law, and
+reading it that way would repeat the error the previous version made in the other
+direction. The likelier explanation is a **discreteness floor**: a one-fill
+"metaorder" still moves the mid by something on the order of half a tick, so
+impact does not fall toward zero as participation does. That floor lifts the
+smallest bins, flattens the log-log slope and biases the exponent *down*. The old
+`at` convention removed the floor by accident — by starting the measurement after
+the first fill — which is why it read higher, but it did so by discarding real
+impact rather than by fixing anything.
+
+Participation here also spans roughly 1e-6 to 3e-3, two to four orders of
+magnitude below the range where the square-root law is documented. Between the
+floor at the bottom and the range at the top, this session does not deliver a
+clean test of the law in either direction. That is the honest conclusion.
 
 Two further limits: proxy metaorders merge concurrent participants trading the
 same way and split a single participant who pauses, and this is one instrument
-on one session — the propagator above now covers two, this section does not.
+on one session — the propagator below now covers two, this section does not.
 
 That reconstruction difficulty is itself a documented result rather than a
 private worry. Naviglio, Bormetti, Campigli, Rodikov and Lillo
@@ -81,20 +130,7 @@ models fitted to anonymised public flow produce price trajectories that are
 reversion, because they misspecify where order-flow autocorrelation comes from.
 The proxy-metaorder construction used here inherits exactly that exposure: a
 maximal same-signed run is an assumption about which fills share a parent, and
-that assumption is the thing their paper shows is load-bearing. The exponent of
-0.788 above should be read with that in mind.
-
-> **Data provenance caveat (2026-09).** `data/MSFT_2024-06-03_metaorders.csv`
-> predates the execution-mirror-cancel fix in the sibling `lob-engine-cpp`
-> repository and has **not** been rebuilt. That fix changed the reconstructed
-> book, and rebuilding the one-second series in this repo moved 253 of its
-> 23,390 mid values (explanatory R² 0.371 → 0.366). The metaorder file's
-> `mid_start` / `mid_end` columns are derived from the same book and are
-> therefore likely affected in the same way. It is flagged rather than silently
-> corrected because, unlike the one-second series, this repo has no committed
-> builder for it, so its exact construction cannot be verified and re-deriving
-> it would mean guessing at the original convention. Treat the 0.788 exponent as
-> provisional pending a rebuild from a committed script.
+that assumption is the thing their paper shows is load-bearing.
 
 The estimator is fitted on **bin means**, not raw observations, and the tests
 pin why that matters: conditioning on positive impact — which superficially
@@ -103,6 +139,9 @@ exponent. One test exists purely to demonstrate that bias and fail if the
 estimator ever starts filtering.
 
 ```bash
+python scripts/build_metaorders.py \
+    --messages MSFT_2024-06-03_message.csv --book MSFT_2024-06-03_l1.csv \
+    --out data/MSFT_2024-06-03_metaorders.csv
 python scripts/run_metaorder_impact.py
 ```
 

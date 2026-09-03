@@ -9,7 +9,7 @@
 
 - Source code, tests, notebooks, and figures
 - `data/MSFT_2024-06-03_1s.csv` (23,390 rows) and `data/INTC_2024-08-02_1s.csv` (23,394 rows): one-second signed volume and mid price, derived from Databento MBO. Small, aggregated, and sufficient to reproduce the propagator calibration end to end.
-- `scripts/build_1s_bars.py`, which regenerates either series from a Databento extract. Until 2026-09 these CSVs were committed with no builder behind them, which made the headline R² unreproducible from source; that gap is now closed, and running the builder on MSFT reproduces the committed file exactly.
+- `scripts/build_1s_bars.py` and `scripts/build_metaorders.py`, which regenerate the committed series from a Databento extract. Until 2026-09 these CSVs were committed with no builder behind them, which made the headline results unreproducible from source. That gap is now closed for both: the bar builder reproduces the committed MSFT series exactly, and the metaorder builder replaces a file that could not be reproduced at all.
 - Derived results under `reports/`
 
 ## Session selection
@@ -24,12 +24,16 @@ Two symbol-days, chosen to differ in kind rather than to repeat a regime.
 Both extracts cost $0.00 against the programme entitlement, which covers
 `XNAS.ITCH` outright.
 
-## Known provenance gap
+## Provenance gap, now closed
 
-`data/MSFT_2024-06-03_metaorders.csv` predates the execution-mirror-cancel fix
-in the sibling `lob-engine-cpp` repository and has not been rebuilt; there is no
-committed builder for it, so its construction cannot be verified. See the
-provenance caveat in the metaorder section of `README.md`.
+`data/MSFT_2024-06-03_metaorders.csv` was committed with no builder behind it and
+has been rebuilt by `scripts/build_metaorders.py`. Recovering the construction
+found two defects in the original -- fills sharing a timestamp were reordered,
+and the starting mid was read after the run's first fill instead of before it --
+and the fitted exponent moves from 0.788 to 0.370 as a result. The old file's mid
+columns could not be reproduced under any lookup convention tried, so its exact
+construction is not recoverable. See the metaorder section of `README.md` for the
+decomposition.
 
 ## What is not committed
 
