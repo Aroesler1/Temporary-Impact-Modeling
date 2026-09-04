@@ -20,6 +20,9 @@ Convention (recovered from, and verified against, the committed MSFT series):
 * One row per second that carries at least one message. Seconds with no message
   at all are absent rather than zero-filled, so the bar grid is event-supported;
   on MSFT 2024-06-03 that drops 10 of 23,400 seconds.
+* `volume` is the UNSIGNED sum of the same displayed fills, so a second's
+  one-sidedness can be measured; `signed_vol` alone cannot distinguish a quiet
+  one-way second from a busy two-way one.
 * `signed_vol` sums book-affecting displayed fills only (LOBSTER event type 4).
   A fill's `direction` is the side of the RESTING order it executed against, so
   the aggressor's sign is its negation: hitting a resting sell is a buy.
@@ -66,8 +69,12 @@ def build(messages_path: Path, book_path: Path) -> pd.DataFrame:
     seconds = np.unique(message_second)
 
     fills = messages[messages.event_type == LOBSTER_DISPLAYED_FILL]
+    fill_second = fills.time.astype(np.int64)
     signed = (-fills.direction * fills["size"]).groupby(
-        fills.time.astype(np.int64)).sum().reindex(seconds, fill_value=0)
+        fill_second).sum().reindex(seconds, fill_value=0)
+    # unsigned displayed volume, needed for the direction-dominance filter in
+    # `crossover.py`; signed volume alone cannot say how one-sided a bin was
+    volume = fills["size"].groupby(fill_second).sum().reindex(seconds, fill_value=0)
 
     book = pd.read_csv(book_path)
     book = book[(book.timestamp >= RTH_OPEN) & (book.timestamp < RTH_CLOSE)]
@@ -80,6 +87,7 @@ def build(messages_path: Path, book_path: Path) -> pd.DataFrame:
 
     frame = pd.DataFrame({"sec": seconds,
                           "signed_vol": signed.to_numpy(dtype=float),
+                          "volume": volume.to_numpy(dtype=float),
                           "mid": mid.to_numpy(dtype=float)})
     # A one-sided book leaves mid undefined; carry the last known quote rather
     # than dropping the second, which would silently shorten the return series.
@@ -111,6 +119,8 @@ def main() -> int:
 
     if args.compare is not None:
         ref = pd.read_csv(args.compare)
+        # compares the three columns the original convention defined; `volume`
+        # was added later and a reference file predating it must still match
         same = (len(ref) == len(frame)
                 and np.array_equal(ref.sec.to_numpy(), frame.sec.to_numpy())
                 and np.array_equal(ref.signed_vol.to_numpy(), frame.signed_vol.to_numpy())

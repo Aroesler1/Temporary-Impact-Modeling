@@ -37,18 +37,32 @@ def scales(session: str) -> pd.Series:
 
 @lru_cache(maxsize=32)
 def bars(session: str) -> pd.DataFrame:
-    """One-second bars joined to the one-second OFI series.
+    """The committed one-second series, exactly as `build_1s_bars.py` wrote it.
 
-    An inner join on `sec`: the two builders both drop seconds the feed never
-    spoke in, but MBO and MBP-10 do not always speak in exactly the same ones,
-    and a regression that silently zero-filled the difference would report flow
-    of zero where the truth is no observation.
+    Deliberately NOT joined to the OFI series: MBO and MBP-10 do not speak in
+    exactly the same seconds, so joining drops a handful of rows and would move
+    every propagator number by a few units in the fifth decimal against the
+    figures the README quotes. Part 4 needs both flows on one grid and asks for
+    `bars_with_ofi` explicitly.
     """
-    frame = pd.read_csv(DATA / f"{session}_1s.csv")
+    return pd.read_csv(DATA / f"{session}_1s.csv").sort_values("sec").reset_index(
+        drop=True)
+
+
+@lru_cache(maxsize=32)
+def bars_with_ofi(session: str) -> pd.DataFrame:
+    """One-second bars inner-joined to the one-second OFI series.
+
+    An inner join on `sec`: both builders drop seconds the feed never spoke in,
+    and zero-filling the difference would report flow of zero where the truth is
+    no observation.
+    """
+    frame = bars(session)
     ofi_path = DATA / "ofi" / f"{session}_1s_ofi.csv"
-    if ofi_path.exists():
-        frame = frame.merge(pd.read_csv(ofi_path), on="sec", how="inner")
-    return frame.sort_values("sec").reset_index(drop=True)
+    if not ofi_path.exists():
+        raise FileNotFoundError(ofi_path)
+    return frame.merge(pd.read_csv(ofi_path), on="sec", how="inner").reset_index(
+        drop=True)
 
 
 @lru_cache(maxsize=32)

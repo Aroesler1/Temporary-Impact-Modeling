@@ -81,12 +81,11 @@ def integrate_pca(ofi: np.ndarray, fit_rows: slice | np.ndarray | None = None
 # regressions
 # --------------------------------------------------------------------------
 
-def _ols_r2(y: np.ndarray, X: np.ndarray, split: int) -> tuple[float, float]:
-    """In-sample and out-of-sample R2 of y on X (intercept added here)."""
+def _fit_score(y: np.ndarray, X: np.ndarray, split: int) -> tuple[float, float]:
+    """In-sample and out-of-sample R2 of y on X, intercept added here."""
     X = np.column_stack([np.ones(len(X)), X])
     ok = np.isfinite(y) & np.isfinite(X).all(axis=1)
     y, X = y[ok], X[ok]
-    split = int(len(y) * split / 100) if split > 1 else int(len(y) * split)
     if split < 50 or len(y) - split < 50:
         return float("nan"), float("nan")
     beta, *_ = np.linalg.lstsq(X[:split], y[:split], rcond=None)
@@ -99,6 +98,44 @@ def _ols_r2(y: np.ndarray, X: np.ndarray, split: int) -> tuple[float, float]:
     return r2(y[:split], X[:split]), r2(y[split:], X[split:])
 
 
+def _transform(v: np.ndarray, delta: float) -> np.ndarray:
+    """f(v) = sign(v)|v|^delta, the same concavity transform the propagator uses."""
+    return np.sign(v) * np.abs(v) ** delta
+
+
+DELTA_GRID = (0.25, 0.5, 0.75, 1.0)
+
+
+FIXED_DELTA = 0.5
+
+
+def delta_sensitivity(frame: pd.DataFrame, column: str,
+                      train_frac: float = 0.7, grid=DELTA_GRID) -> pd.DataFrame:
+    """Out-of-sample R2 of one flow at each concavity, in and out of sample.
+
+    This exists because SELECTING delta does not work for OFI. Both flows are
+    heavy-tailed -- a handful of seconds carry tens of thousands of shares -- and
+    for OFI the in-sample fit rises monotonically with delta while the held-out
+    fit collapses: on MSFT 2024-04-01 the linear specification scores +0.65 in
+    sample and -3.15 out of it. A nested split does not rescue the choice,
+    because whichever window is used to choose contains its own extremes.
+
+    So `compare_flows` FIXES delta at 0.5 for both flows rather than selecting
+    it, and this table is what justifies the choice instead of hiding it.
+    """
+    mid = pd.to_numeric(frame["mid"], errors="coerce").to_numpy(float)
+    ret = np.full(len(mid), np.nan)
+    ret[1:] = np.log(mid[1:] / mid[:-1])
+    v = pd.to_numeric(frame[column], errors="coerce").to_numpy(float)
+    train_end = int(len(frame) * train_frac)
+    rows = []
+    for delta in grid:
+        r2_in, r2_out = _fit_score(ret, _transform(v, delta)[:, None], train_end)
+        rows.append({"column": column, "delta": delta,
+                     "r2_in": r2_in, "r2_out": r2_out})
+    return pd.DataFrame(rows)
+
+
 @dataclass
 class FlowComparison:
     session: str
@@ -108,11 +145,14 @@ class FlowComparison:
     r2_both: float
     incremental_trade: float   # both minus ofi alone
     incremental_ofi: float     # both minus trade alone
+    delta_trade: float
+    delta_ofi: float
     n: int
 
 
 def compare_flows(frame: pd.DataFrame, session: str, train_frac: float = 0.7,
-                  ofi_col: str = "ofi_integrated") -> list[FlowComparison]:
+                  ofi_col: str = "ofi_integrated",
+                  delta: float = FIXED_DELTA) -> list[FlowComparison]:
     """Signed trade volume against OFI, alone and together, in both relations.
 
     Contemporaneous regresses the return over a second on flow in the SAME
@@ -126,17 +166,22 @@ def compare_flows(frame: pd.DataFrame, session: str, train_frac: float = 0.7,
     trade = pd.to_numeric(frame["signed_vol"], errors="coerce").to_numpy(float)
     ofi = pd.to_numeric(frame[ofi_col], errors="coerce").to_numpy(float)
 
+    train_end = int(len(frame) * train_frac)
+    # the same fixed concavity for both flows: equal footing, and no selection
+    # step whose instability would be mistaken for a property of the flows
+    delta_t = delta_o = delta
+
     out = []
     for relation, lag in (("contemporaneous", 0), ("predictive", 1)):
-        t = np.roll(trade, lag).astype(float)
-        o = np.roll(ofi, lag).astype(float)
+        t = _transform(trade, delta_t)
+        o = _transform(ofi, delta_o)
         if lag:
-            t[:lag] = np.nan
-            o[:lag] = np.nan
-        _, r_t = _ols_r2(ret, t[:, None], train_frac)
-        _, r_o = _ols_r2(ret, o[:, None], train_frac)
-        _, r_b = _ols_r2(ret, np.column_stack([t, o]), train_frac)
+            t = np.r_[np.full(lag, np.nan), t[:-lag]]
+            o = np.r_[np.full(lag, np.nan), o[:-lag]]
+        _, r_t = _fit_score(ret, t[:, None], train_end)
+        _, r_o = _fit_score(ret, o[:, None], train_end)
+        _, r_b = _fit_score(ret, np.column_stack([t, o]), train_end)
         n = int(np.sum(np.isfinite(ret) & np.isfinite(t) & np.isfinite(o)))
         out.append(FlowComparison(session, relation, r_t, r_o, r_b,
-                                  r_b - r_o, r_b - r_t, n))
+                                  r_b - r_o, r_b - r_t, delta_t, delta_o, n))
     return out
