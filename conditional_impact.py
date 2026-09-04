@@ -110,6 +110,12 @@ def calibrate_on_window(bars: pd.DataFrame, train_end: int,
 def predict_propagator(orders: pd.DataFrame, cal: Calibration) -> np.ndarray:
     """Impact each order's own flow implies under the fitted kernel.
 
+    Returned IN THE ORDER'S OWN DIRECTION, matching `realised_impact`: a sell
+    whose price falls has positive impact, not negative. The raw convolution is
+    signed by the flow, so a sell comes out negative and comparing it against a
+    direction-normalised realisation would score the model against its own sign
+    convention rather than against the data.
+
     Vectorised over orders. An order that spans D seconds spreads its volume
     evenly over them, which is the only schedule the reconstruction supports:
     a proxy metaorder carries its fills' total size and its start and end, not
@@ -134,7 +140,8 @@ def predict_propagator(orders: pd.DataFrame, cal: Calibration) -> np.ndarray:
         lags = np.arange(min(L, int(d) - 1) + 1)
         coeff = float(np.sum((d - lags) * G[lags]))
         out[sel] = coeff * signed_flow(per_second, delta)
-    return out
+    # back into the order's own direction
+    return out * orders["sign"].to_numpy(float)
 
 
 def realised_impact(orders: pd.DataFrame) -> np.ndarray:

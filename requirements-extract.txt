@@ -1,0 +1,5 @@
+# EXTRACTION ONLY. Needed to pull raw vendor data and rebuild the committed
+# derived series from it. Every published result reproduces from the committed
+# data without this file installed, which is why it is separate.
+-r requirements.txt
+databento      # the vendor SDK: pricing a request with metadata.get_cost, pulling XNAS.ITCH MBO and MBP-10, and reading .dbn.zst
