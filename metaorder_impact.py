@@ -3,7 +3,17 @@
 The static book-walk elsewhere in this repository fits a concavity exponent to
 the cost of consuming *displayed* liquidity at an instant. As the README states,
 that quantity has no time dimension and is indexed by shares rather than by
-participation, so it cannot test either square-root law. This module can.
+participation, so it cannot test either square-root law. This module measures
+the right quantity.
+
+Measuring the right quantity is not the same as testing the law, and on this
+data it is not enough. `crossover.py` locates the linear-to-square-root
+crossover at about 2.8e-4 of daily volume, where impact is roughly 8 ticks.
+Proxy metaorders built from same-signed fill runs sit four orders of magnitude
+BELOW that, at impacts of a tenth of a tick, so the whole range lives inside the
+price grid's own resolution. The exponent this module returns on them, 0.209 to
+0.487 across fifteen symbol-days, is a measurement of that discreteness floor
+rather than of either law.
 
 Method, following the public-data metaorder approach (arXiv 2503.18199):
 

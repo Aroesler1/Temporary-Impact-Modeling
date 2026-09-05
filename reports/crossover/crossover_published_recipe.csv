@@ -1,0 +1,2 @@
+panel,n_metaorders,a,r2_weighted,q_star_fraction_of_daily_volume,q_star_ci_low,q_star_ci_high,impact_at_crossover_sigma,impact_at_crossover_dollars,impact_at_crossover_ticks,half_tick_floor_ticks,above_one_tick,q_star_at_grid_boundary
+published_recipe,1176,113.67501754055534,0.8331903592376226,0.0002782324670558914,0.00014267539541174413,0.0005690953125862413,0.03162808057293044,0.0821429380821801,8.21429380821801,0.5,True,False

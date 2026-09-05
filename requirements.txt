@@ -1,0 +1,7 @@
+# Everything the tests, the fitters and the run scripts need. All of it is
+# already implied by the code that was here before this branch.
+numpy          # arrays; every fitter is vectorised over them
+pandas         # the derived series and every report table are DataFrames
+scipy          # least_squares for the weighted nonlinear fits, minimize for Almgren-Chriss
+matplotlib     # the exponent profile and schedule figures
+pytest         # the test suite
