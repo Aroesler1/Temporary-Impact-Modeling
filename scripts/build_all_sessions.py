@@ -74,6 +74,10 @@ def main() -> int:
                     help="where the message and book intermediates go "
                          "(default: a temporary directory)")
     ap.add_argument("--keep-intermediates", action="store_true")
+    ap.add_argument("--bin-ms", type=int, default=1000,
+                    help="bar width in milliseconds; anything but 1000 writes "
+                         "to <out-dir> under a name carrying the width and "
+                         "skips the metaorder build, which has no bin grid")
     ap.add_argument("--force", action="store_true",
                     help="rebuild sessions whose outputs already exist")
     args = ap.parse_args()
@@ -89,9 +93,11 @@ def main() -> int:
     for sess in sessions():
         if args.symbol and sess.symbol not in set(args.symbol):
             continue
-        bars = args.out_dir / f"{sess.key}_1s.csv"
+        fine = args.bin_ms != 1000
+        suffix = "1s" if not fine else f"{args.bin_ms}ms"
+        bars = args.out_dir / f"{sess.key}_{suffix}.csv"
         metas = args.out_dir / f"{sess.key}_metaorders.csv"
-        if bars.exists() and metas.exists() and not args.force:
+        if bars.exists() and (metas.exists() or fine) and not args.force:
             print(f"  {sess.key:<16} already built")
             continue
 
@@ -113,17 +119,20 @@ def main() -> int:
              "--backend", "map", "--depth", "1", "--book-out", str(book)])
 
         cmd = [sys.executable, str(HERE / "build_1s_bars.py"),
-               "--messages", str(message), "--book", str(book), "--out", str(bars)]
+               "--messages", str(message), "--book", str(book), "--out", str(bars),
+               "--bin-ms", str(args.bin_ms)]
         # the one session with a committed predecessor is the convention check
-        if sess.key == "MSFT_2024-06-03" and (args.out_dir / f"{sess.key}_1s.csv").exists():
+        if (not fine and sess.key == "MSFT_2024-06-03"
+                and (args.out_dir / f"{sess.key}_1s.csv").exists()):
             reference = work / "reference_1s.csv"
             shutil.copy(args.out_dir / f"{sess.key}_1s.csv", reference)
             cmd += ["--compare", str(reference)]
         run(cmd, quiet=False)
 
-        run([sys.executable, str(HERE / "build_metaorders.py"),
-             "--messages", str(message), "--book", str(book), "--out", str(metas)],
-            quiet=False)
+        if not fine:
+            run([sys.executable, str(HERE / "build_metaorders.py"),
+                 "--messages", str(message), "--book", str(book), "--out", str(metas)],
+                quiet=False)
 
         if not args.keep_intermediates:
             shutil.rmtree(work, ignore_errors=True)

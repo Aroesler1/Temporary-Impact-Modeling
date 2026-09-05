@@ -89,3 +89,10 @@ def test_split_index_is_the_same_seventy_percent_everywhere():
 def test_unknown_session_raises():
     with pytest.raises(KeyError):
         panel.scales("NVDA_2024-01-02")
+
+
+def test_fine_bars_error_names_the_rebuild_command():
+    """The sub-second bars are not committed, so the failure has to tell the
+    reader how to make them rather than just that a path is missing."""
+    with pytest.raises(FileNotFoundError, match="build_all_sessions.py --bin-ms"):
+        panel.fine_bars("MSFT_2024-06-03", bin_ms=7)

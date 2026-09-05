@@ -17,7 +17,10 @@ Convention (recovered from, and verified against, the committed MSFT series):
 
 * Regular trading hours only, 09:30:00 to 16:00:00 exchange time -> LOBSTER
   seconds [34200, 57600).
-* One row per second that carries at least one message. Seconds with no message
+* One row per BIN that carries at least one message. The bin is one second by
+  default; `--bin-ms` makes it finer, and `sec` then carries the bin's start
+  time in seconds. At the default of 1000 ms the output is byte for byte what
+  it was before the option existed, which a test asserts. Seconds with no message
   at all are absent rather than zero-filled, so the bar grid is event-supported;
   on MSFT 2024-06-03 that drops 10 of 23,400 seconds.
 * `volume` is the UNSIGNED sum of the same displayed fills, so a second's
@@ -58,18 +61,44 @@ _PRICE_SCALE = 10_000.0  # LOBSTER integer prices are 1e-4 dollars
 _MESSAGE_COLS = ["time", "event_type", "order_id", "size", "price", "direction"]
 
 
-def build(messages_path: Path, book_path: Path) -> pd.DataFrame:
+def _bin_index(time: pd.Series, bin_ms: int) -> np.ndarray:
+    """Which bin each timestamp falls in, as an integer count of bins.
+
+    LOBSTER times carry microsecond resolution, so the index is computed in
+    integer microseconds rather than by multiplying a float by 1000, which would
+    put a timestamp exactly on a bin edge into the wrong bin often enough to
+    matter over four million messages.
+    """
+    micros = np.rint(time.to_numpy(float) * 1e6).astype(np.int64)
+    return micros // (int(bin_ms) * 1000)
+
+
+def _bin_start(index: np.ndarray, bin_ms: int) -> np.ndarray:
+    """Bin start in seconds; integer seconds when the bin divides a second.
+
+    The multiply happens in INTEGER milliseconds before the divide. Scaling by a
+    precomputed 0.1 instead gives 34201.200000000004 for the twelfth bin of a
+    second, which then reaches the CSV and breaks any join on the column.
+    """
+    if int(bin_ms) % 1000 == 0:
+        return index * (int(bin_ms) // 1000)
+    return (index * int(bin_ms)) / 1000.0
+
+
+def build(messages_path: Path, book_path: Path, bin_ms: int = 1000) -> pd.DataFrame:
+    if int(bin_ms) <= 0:
+        raise SystemExit("--bin-ms must be positive")
     messages = pd.read_csv(messages_path, names=_MESSAGE_COLS, header=None)
     messages = messages[(messages.time >= RTH_OPEN) & (messages.time < RTH_CLOSE)]
     if messages.empty:
         raise SystemExit(f"{messages_path} has no messages inside RTH")
-    message_second = messages.time.astype(np.int64)
+    message_second = _bin_index(messages.time, bin_ms)
 
-    # the bar grid: every second the feed actually spoke in
+    # the bar grid: every bin the feed actually spoke in
     seconds = np.unique(message_second)
 
     fills = messages[messages.event_type == LOBSTER_DISPLAYED_FILL]
-    fill_second = fills.time.astype(np.int64)
+    fill_second = pd.Series(_bin_index(fills.time, bin_ms), index=fills.index)
     signed = (-fills.direction * fills["size"]).groupby(
         fill_second).sum().reindex(seconds, fill_value=0)
     # unsigned displayed volume, needed for the direction-dominance filter in
@@ -83,9 +112,9 @@ def build(messages_path: Path, book_path: Path) -> pd.DataFrame:
             f"book has {len(book):,} RTH rows but the message file has "
             f"{len(messages):,}; they must come from the same conversion")
     mid = (book.bid_px_0 + book.ask_px_0) / 2.0 / _PRICE_SCALE
-    mid = mid.groupby(book.timestamp.astype(np.int64)).last().reindex(seconds)
+    mid = mid.groupby(_bin_index(book.timestamp, bin_ms)).last().reindex(seconds)
 
-    frame = pd.DataFrame({"sec": seconds,
+    frame = pd.DataFrame({"sec": _bin_start(seconds, bin_ms),
                           "signed_vol": signed.to_numpy(dtype=float),
                           "volume": volume.to_numpy(dtype=float),
                           "mid": mid.to_numpy(dtype=float)})
@@ -107,15 +136,18 @@ def main() -> int:
     ap.add_argument("--book", type=Path, required=True,
                     help="engine L1 book CSV from lob_engine --depth 1 --book-out")
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--bin-ms", type=int, default=1000,
+                    help="bin width in milliseconds; 1000 is the original "
+                         "one-second grid and reproduces it exactly")
     ap.add_argument("--compare", type=Path, default=None,
                     help="existing series to diff against; exits non-zero if it differs")
     args = ap.parse_args()
 
-    frame = build(args.messages, args.book)
+    frame = build(args.messages, args.book, bin_ms=args.bin_ms)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(args.out, index=False)
-    print(f"{args.out}: {len(frame):,} one-second bars "
-          f"[{int(frame.sec.min())}, {int(frame.sec.max())}]")
+    print(f"{args.out}: {len(frame):,} {args.bin_ms} ms bars "
+          f"[{frame.sec.min():g}, {frame.sec.max():g}]")
 
     if args.compare is not None:
         ref = pd.read_csv(args.compare)

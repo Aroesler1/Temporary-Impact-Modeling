@@ -1,0 +1,2 @@
+bin_ms,decay_visible,criterion_L_above_1,criterion_G1_nonzero,sessions_with_L_above_1,mean_G1_over_G0,band_lo,band_hi,significant_tail_lags,of_which_negative,mean_significant_tail,median_history_gain
+100,False,True,False,12,0.0020483298889689703,-0.016902858333988743,0.030953552844808403,15,15,-0.004906832209947018,0.0017023946485176245

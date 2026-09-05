@@ -147,7 +147,166 @@ def test_evaluate_session_scores_a_perfect_model_near_one():
     result = ci.evaluate_session("SYNTH", bars, orders, session_volume=1e7,
                                  sigma_d=0.02)
     assert result.calibration.delta == 1.0
-    assert result.propagator["r2_no_refit"] > 0.99
-    assert result.propagator["slope"] == pytest.approx(1.0, abs=0.02)
+    assert result.r2("propagator") > 0.99
+    assert result.scores["propagator"]["slope"] == pytest.approx(1.0, abs=0.02)
     # the square-root model has the wrong shape here and must score worse
-    assert result.sqrt_model["r2_no_refit"] < result.propagator["r2_no_refit"]
+    assert result.r2("sqrt") < result.r2("propagator")
+
+
+# --------------------------------------------------------------------------
+# which volatility belongs in the square-root model
+# --------------------------------------------------------------------------
+
+def test_blend_sigma_reduces_to_each_end():
+    trail = np.array([0.01, 0.02, 0.04])
+    np.testing.assert_allclose(ci.blend_sigma(0.03, trail, 1.0), 0.03)
+    np.testing.assert_allclose(ci.blend_sigma(0.03, trail, 0.0), trail)
+    # the midpoint is the geometric mean, not the arithmetic one
+    np.testing.assert_allclose(ci.blend_sigma(0.03, trail, 0.5),
+                               np.sqrt(0.03 * trail))
+
+
+def test_fit_blend_alpha_recovers_a_known_weight():
+    """Orders whose impact was generated at a known blend must recover it."""
+    rng = np.random.default_rng(0)
+    n, volume, sigma_d = 4000, 1e7, 0.02
+    trail = np.exp(rng.uniform(np.log(0.005), np.log(0.05), n))
+    shares = np.exp(rng.uniform(np.log(10), np.log(1e5), n))
+    alpha_true, c_true = 0.3, 0.9
+    sigma = ci.blend_sigma(sigma_d, trail, alpha_true)
+    impact = c_true * sigma * np.sqrt(shares / volume)
+    orders = pd.DataFrame({"sign": np.ones(n), "shares": shares,
+                           "mid_start": np.full(n, 100.0),
+                           "mid_end": 100.0 * np.exp(impact)})
+    alpha, c = ci.fit_blend_alpha(orders, volume, sigma_d, trail)
+    assert alpha == pytest.approx(alpha_true, abs=0.02)
+    assert c == pytest.approx(c_true, rel=0.02)
+
+
+def test_halfhour_bucket_starts_at_the_open():
+    got = ci.halfhour_bucket(np.array([34200.0, 35999.0, 36000.0, 57599.0]))
+    np.testing.assert_array_equal(got, [0, 0, 1, 12])
+
+
+def test_halfhour_ratios_finds_a_known_intraday_shape():
+    """A session that is twice as volatile in its second half hour must show a
+    ratio twice as large there."""
+    n = 3600
+    rng = np.random.default_rng(1)
+    ret = np.r_[rng.standard_normal(1800) * 1e-5,
+                rng.standard_normal(1800) * 2e-5]
+    bars = pd.DataFrame({"sec": np.arange(34200, 34200 + n),
+                         "mid": 100.0 * np.exp(np.cumsum(ret))})
+    ratios = ci.halfhour_ratios(bars)
+    assert set(ratios.index) == {0, 1}
+    assert ratios[1] / ratios[0] == pytest.approx(2.0, rel=0.1)
+
+
+def test_profile_sigma_applies_the_bucket_multiplier():
+    profile = pd.Series({0: 1.5, 1: 0.5})
+    got = ci.profile_sigma(0.02, profile, np.array([34200.0, 36000.0]))
+    np.testing.assert_allclose(got, [0.03, 0.01])
+
+
+def test_profile_sigma_falls_back_to_one_where_there_is_no_donor():
+    """An uncovered half hour must be left at sigma_D rather than silently
+    given a neighbour's multiplier or a NaN."""
+    got = ci.profile_sigma(0.02, pd.Series({0: 1.5}), np.array([36000.0]))
+    assert got[0] == pytest.approx(0.02)
+
+
+# --------------------------------------------------------------------------
+# the participation-rate term
+# --------------------------------------------------------------------------
+
+def test_execution_rate_is_one_when_the_order_was_the_only_trade():
+    bars = pd.DataFrame({"sec": np.arange(34200, 34205), "volume": [0.0, 500.0, 0, 0, 0],
+                         "mid": 100.0, "signed_vol": 0.0})
+    orders = pd.DataFrame({"shares": [500.0], "t_start": [34201.2], "t_end": [34201.8]})
+    assert ci.execution_rate(orders, bars)[0] == pytest.approx(1.0)
+
+
+def test_execution_rate_falls_when_others_traded_in_the_window():
+    bars = pd.DataFrame({"sec": np.arange(34200, 34205),
+                         "volume": [0.0, 500.0, 500.0, 0.0, 0.0],
+                         "mid": 100.0, "signed_vol": 0.0})
+    orders = pd.DataFrame({"shares": [250.0], "t_start": [34201.0], "t_end": [34202.5]})
+    assert ci.execution_rate(orders, bars)[0] == pytest.approx(0.25)
+
+
+def test_execution_rate_is_clipped_into_the_unit_interval():
+    bars = pd.DataFrame({"sec": np.arange(34200, 34203), "volume": [10.0, 10.0, 10.0],
+                         "mid": 100.0, "signed_vol": 0.0})
+    orders = pd.DataFrame({"shares": [1e9, 1e-9], "t_start": [34200.0, 34200.0],
+                           "t_end": [34200.5, 34200.5]})
+    rate = ci.execution_rate(orders, bars)
+    assert rate.max() <= 1.0
+    assert rate.min() > 0.0
+
+
+def test_fit_rate_model_recovers_known_parameters():
+    rng = np.random.default_rng(2)
+    n, volume, sigma = 6000, 1e7, 0.02
+    shares = np.exp(rng.uniform(np.log(100), np.log(1e5), n))
+    rate = rng.uniform(0.02, 1.0, n)
+    c_true, delta_true, k_true = 0.8, 0.45, 0.15
+    impact = sigma * c_true * (shares / volume) ** delta_true * (
+        1.0 + k_true * np.log(rate))
+    orders = pd.DataFrame({"sign": np.ones(n), "shares": shares,
+                           "mid_start": np.full(n, 100.0),
+                           "mid_end": 100.0 * np.exp(impact)})
+    fit = ci.fit_rate_model(orders, volume, sigma, rate)
+    assert fit.c == pytest.approx(c_true, rel=0.03)
+    assert fit.delta == pytest.approx(delta_true, abs=0.02)
+    assert fit.k == pytest.approx(k_true, abs=0.02)
+
+
+def test_fit_rate_model_returns_k_near_zero_when_rate_does_not_matter():
+    rng = np.random.default_rng(3)
+    n, volume, sigma = 6000, 1e7, 0.02
+    shares = np.exp(rng.uniform(np.log(100), np.log(1e5), n))
+    rate = rng.uniform(0.02, 1.0, n)
+    impact = sigma * 0.8 * np.sqrt(shares / volume)
+    orders = pd.DataFrame({"sign": np.ones(n), "shares": shares,
+                           "mid_start": np.full(n, 100.0),
+                           "mid_end": 100.0 * np.exp(impact)})
+    assert abs(ci.fit_rate_model(orders, volume, sigma, rate).k) < 0.01
+
+
+def test_rate_model_prediction_stays_positive_over_the_fitted_range():
+    """k is bounded so the correction factor cannot flip the sign of predicted
+    impact for the slowest orders in the training set."""
+    rng = np.random.default_rng(4)
+    n, volume, sigma = 3000, 1e7, 0.02
+    shares = np.exp(rng.uniform(np.log(100), np.log(1e5), n))
+    rate = rng.uniform(1e-4, 1.0, n)
+    impact = sigma * 0.8 * np.sqrt(shares / volume) * (1 + 5.0 * np.log(rate))
+    orders = pd.DataFrame({"sign": np.ones(n), "shares": shares,
+                           "mid_start": np.full(n, 100.0),
+                           "mid_end": 100.0 * np.exp(impact)})
+    fit = ci.fit_rate_model(orders, volume, sigma, rate)
+    assert (ci.predict_rate_model(orders, fit, volume, sigma, rate) > 0).all()
+
+
+def test_evaluate_session_scores_every_model_it_is_given_data_for():
+    n, g0 = 6000, 3e-6
+    rng = np.random.default_rng(5)
+    vol = rng.standard_normal(n) * 200.0
+    mid = 100.0 * np.exp(np.cumsum(g0 * vol))
+    bars = pd.DataFrame({"sec": np.arange(34200, 34200 + n), "signed_vol": vol,
+                         "volume": np.abs(vol), "mid": mid})
+    sec = bars.sec.to_numpy(float)
+    orders = pd.DataFrame({"sign": np.sign(vol), "shares": np.abs(vol),
+                           "t_start": sec, "t_end": sec,
+                           "mid_start": np.r_[100.0, mid[:-1]], "mid_end": mid})
+    profile = pd.Series({b: 1.0 for b in range(13)})
+    result = ci.evaluate_session("SYNTH", bars, orders, 1e7, 0.02,
+                                 tod_profile_loso=profile)
+    for name in ("propagator", "propagator_scaled", "sqrt", "sqrt_trailing_sigma",
+                 "sqrt_blend", "sqrt_tod_loso", "sqrt_rate"):
+        assert name in result.scores
+        assert np.isfinite(result.r2(name))
+    # no prior-session donor was supplied, so that model must be absent rather
+    # than silently scored against a default
+    assert "sqrt_tod_prior" not in result.scores
+    assert result.n_test > 0
