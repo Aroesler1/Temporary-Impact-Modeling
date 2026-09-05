@@ -1,0 +1,10 @@
+cell,available,drawn
+high_tick__high_volume,44,12
+high_tick__low_volume,72,12
+high_tick__mid_volume,51,12
+low_tick__high_volume,78,12
+low_tick__low_volume,33,12
+low_tick__mid_volume,56,12
+mid_tick__high_volume,45,12
+mid_tick__low_volume,62,12
+mid_tick__mid_volume,60,12

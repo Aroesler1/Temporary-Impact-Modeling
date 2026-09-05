@@ -14,3 +14,4 @@ __pycache__/
 # for whoever picks the work up next, not part of the repo.
 handoff.md
 data/bars_100ms/
+data/cross_section/metaorders/

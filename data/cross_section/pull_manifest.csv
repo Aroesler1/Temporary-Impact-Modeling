@@ -1,0 +1,2 @@
+dataset,schema,start,end,n_symbols,billable_size_bytes,get_cost_usd
+XNAS.ITCH,trades,2024-04-01,2024-10-01,110,8219204592,0.0

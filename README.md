@@ -7,6 +7,10 @@ being square-root, and does order flow say anything trade flow does not.
 
 **The sample is 15 symbol-days on three names in 2024**: MSFT, INTC and AAPL,
 five sessions each, on a selection rule fixed before any result was looked at.
+Section 6 is the one exception, and it is a narrow one: a cross-section of 108
+S&P 500 names on the Nasdaq venue only, April to September 2024, built from
+trades rather than the book. It is the only cross-sectional statement in this
+repository and it is not a market-wide one.
 It contains no market-wide stress day: no CPI print, no FOMC, no August 5th.
 One session, INTC 2024-08-02, is a single-name event day (the post-earnings
 collapse), and it behaves differently from the other fourteen in almost every
@@ -623,6 +627,224 @@ python scripts/run_flow_comparison.py
 
 ---
 
+## 6. A cross-section of the square-root law: S&P 500 names on Nasdaq, April to September 2024
+
+Sections 1 to 5 are three names on fifteen days. This section is the exception,
+and its scope is stated before any number: **S&P 500 members on 2024-06-28,
+Nasdaq venue only, 2024-04-01 to 2024-09-30, built from trades rather than the
+book.** What that is not, said plainly:
+
+- **Single venue.** Every volume here is Nasdaq volume, roughly a third of
+  consolidated volume for these names. Participation rates are shares of Nasdaq
+  volume, not of the tape.
+- **Large caps only.** S&P 500 members. Nothing here speaks to small caps, and
+  the sampler could not have drawn one.
+- **One half-year, ordinary days.** No CPI print, no FOMC, no crisis.
+- **Proxy metaorders, not institutional orders.** Runs of one-sided pressure in
+  thirty-second bins, which merge concurrent participants and split a single
+  participant who pauses. Nobody's parent order is observed.
+- **Venue volume, not consolidated.** The pending CRSP row below would be the
+  consolidated check and it is not done.
+- **The published estimates rest on far more.** arXiv 2606.24019 uses 178
+  trading days on one name; the wider literature uses years of data across many
+  more names and, crucially, on REAL metaorders from brokers who know which
+  fills share a parent. This is a hundred names for six months on a proxy.
+
+Nothing below generalises past those bounds, and no result here is a regime
+statement.
+
+### How the sample was drawn
+
+S&P 500 members on 2024-06-28 from a local point-in-time file, 503 names, no
+WRDS query. `ohlcv-1d` for June 2024 supplies two stratification variables:
+relative tick size (one cent over the June mean close) and dollar volume (June
+mean close times June mean Nasdaq volume). Both are cut into terciles **by
+rank**, and **12 names are drawn from each of the nine crossed cells with seed
+20240628**, recorded in DATA.md before a single trade was requested. No cell was
+short. 501 of 503 names resolve on `XNAS.ITCH`.
+
+Stratifying rather than sampling at random matters because relative tick size
+and dollar volume are strongly negatively correlated in the S&P 500: cheap
+stocks are usually also heavily traded. A random sample would load both axes
+together and leave the regression below unable to separate them.
+
+The pull: **110 symbols** (108 drawn plus MSFT and INTC as flagged comparison
+names), 2024-04-01 to 2024-09-30, **8.22 GB uncompressed by
+`get_billable_size`, 2.65 GB on disk, and `get_cost` $0.0000**. All 108 names
+cleared the 200-metaorder minimum; none was skipped.
+
+### Two things measured about the feed rather than assumed
+
+The `trades` schema is a different view from the MBO stream every earlier result
+here used, and two things could have been silently wrong.
+
+1. **Its aggressor-side convention is the OPPOSITE of MBO's.** On MBO an
+   execution's `side` is the RESTING order's side, which is why
+   `databento_to_lobster.py` negates it; on `trades` it is the AGGRESSING side
+   already. Built the MBO way, signed volume correlates **-0.9999** with the
+   committed MBO-derived AAPL series; built the trades way, **+0.9998 to
+   +0.9999**. A flipped sign would have inverted every metaorder in the study
+   and still produced a plausible-looking exponent.
+2. **No deduplication is needed.** Sequence numbers are unique within a session
+   and reset daily, so the collisions in a six-month file are cross-day and are
+   not duplicates. The T/F double count `build_volume_tally.py` handles on MBO
+   does not arise here.
+
+Both are in `reports/cross_section/trades_validation.csv`, and
+`scripts/validate_trade_bars.py` refuses to pass on a correlation between -0.9
+and +0.9.
+
+Two consequences of using trades rather than the book, stated because they are
+real differences from sections 1 to 5. The price is the **last trade price** in
+a bin, not a mid, so every impact includes whatever bid-ask bounce falls between
+the first and last print of a run. And 17% to 22% of prints carry no side at
+all, about 32% of RTH volume: those are the hidden prints, and they count toward
+volume and toward V_D but not toward signed volume, so the direction-dominance
+filter has them in its denominator.
+
+### The distribution of delta
+
+![Cross-section of the square-root exponent](figs/cross_section_delta.png)
+
+`I/sigma_D = c (Q/V_D)^delta` per stock, delta free, bootstrapped **by day**,
+on the arXiv 2606.24019 recipe reused unchanged from section 3.
+
+| | |
+|---|---|
+| median delta | **0.337** |
+| quartiles | [0.299, 0.400] |
+| range | [0.200, 0.529] |
+| **band brackets 0.5** | **7 of 108 names (6%)** |
+| delta below 0.5 | 106 of 108 |
+| median c (delta fixed at 1/2) | **1.097**, quartiles [0.878, 1.261] |
+
+**Ninety-four percent of these names reject 0.5 on their own bootstrap band.**
+That is a much sharper statement than three names could make, and it is
+uncomfortable: the exponent this construction produces is not 1/2, it is close
+to 1/3, and it is close to 1/3 with striking consistency across a hundred
+names, three orders of magnitude of dollar volume and two of tick size.
+
+Read that as a statement about the CONSTRUCTION, not about the law. Every
+caveat at the top of this section applies, and the proxy-metaorder one applies
+hardest: a thirty-second-bin run of one-sided pressure is not an institutional
+parent order, and section 3 already showed this family of reconstruction living
+below the crossover where the law is documented.
+
+With this repository's time-of-day volatility profile in place of the daily
+constant (section 1), the median falls to **0.316** and the quartiles tighten to
+[0.283, 0.340]. It changes the 0.5 verdict on 7 of 108 names, and it changes it
+in one direction: **no name's band brackets 0.5 any more.** The daily constant
+was, if anything, flattering the law.
+
+### The tick-floor hypothesis, and why it fails
+
+**Stated before the regression was run:** delta should FALL with relative tick
+size, because one tick floors the impact of small orders and flattens the fitted
+slope. That is the explanation the three-name study supported in section 3 and
+could not test, since three names give no cross-sectional variation in tick size
+to test against.
+
+Regressors are standardised, so each coefficient is the change in the dependent
+per one standard deviation. There is no bid-ask spread here: the trades schema
+carries no quotes, so the range row is the June mean daily high-low range in
+ticks, which is a range proxy and is named as one.
+
+| term | delta: coef | se (HC1) | t | c: coef | se (HC1) | t |
+|---|---:|---:|---:|---:|---:|---:|
+| intercept | 0.3476 | 0.0053 | 65.91 | 1.0862 | 0.0093 | 116.20 |
+| **log relative tick size** | **-0.0440** | 0.0402 | **-1.10** | -0.0078 | 0.0782 | -0.10 |
+| log daily range in ticks | -0.0802 | 0.0405 | -1.98 | -0.1763 | 0.0843 | -2.09 |
+| **log dollar volume** | **+0.0357** | 0.0050 | **+7.19** | **+0.1986** | 0.0172 | **+11.54** |
+| volatility | +0.0220 | 0.0094 | +2.33 | +0.0428 | 0.0223 | +1.92 |
+| R2 | 0.379 | | n = 108 | 0.850 | | n = 108 |
+
+**The hypothesis is not supported.** The coefficient on relative tick size has
+the predicted sign and is **not distinguishable from zero** (t = -1.10). Worse
+for the hypothesis, the RAW bivariate relationship runs the other way: the
+middle panel of the figure fits a slope of **+0.052 per decade** of relative
+tick size, so before controls delta RISES as the tick gets bigger.
+
+The sign flip between raw and controlled is the whole story. Relative tick size
+and dollar volume are strongly negatively correlated, and **dollar volume is the
+variable that actually explains delta** (t = +7.19, and t = +11.54 for the
+prefactor). Once liquidity is held fixed the tick coefficient collapses to noise.
+What varies across this cross-section is not how big the tick is, it is how much
+trades.
+
+The pooled fits say the same thing from the other side:
+
+| panel | metaorders | delta | c (delta fixed at 1/2) |
+|---|---:|---|---|
+| all 108 names | 1,017,071 | 0.309 [0.306, 0.313] | 1.068 [1.063, 1.073] |
+| small-tick tercile only | 251,141 | **0.274** [0.269, 0.280] | 0.911 [0.904, 0.920] |
+
+The tick-floor account predicts the small-tick tercile, where the floor bites
+least, should have the HIGHER exponent. It has the lower one, 0.274 against
+0.309, and the intervals do not overlap.
+
+### The crossover, across a hundred names
+
+Section 3 found the linear-to-square-root crossover interior at 2.8e-4 of daily
+volume on the three-name panel, with impact there of 8.2 ticks. Per stock here,
+q\* is **interior on only 21 of 108 names**, but where it can be located the
+impact at the crossover is **a median 2.65 ticks and above one tick on 94 of
+108**. So the crossover, where it is identified at all, sits above the
+discreteness floor rather than inside it, which is the same conclusion section 3
+reached and is now reached on a hundred names instead of three.
+
+### Beside the three-name study, and beside the published result
+
+| symbol | here: c | band | here: delta | band | TIM-3 c | TIM-3 delta |
+|---|---:|---|---:|---|---:|---:|
+| AAPL | 1.514 | [1.44, 1.60] | 0.408 | [0.35, 0.47] | 1.678 | 0.338 |
+| MSFT | 1.577 | [1.49, 1.68] | 0.340 | [0.31, 0.38] | 2.576 | **0.620** |
+| INTC | 1.724 | [1.68, 1.78] | 0.403 | [0.38, 0.44] | 1.521 | 0.363 |
+
+AAPL and INTC agree between the two studies to within the width of a band, on
+different feeds (trades against MBO) and different samples (127 sessions against
+5). **MSFT does not: 0.620 on five sessions, 0.340 on a hundred and
+twenty-seven.** The three-name study's MSFT exponent was the outlier of a small
+sample, and section 3's per-stock table should be read with that in mind.
+
+And the published comparison, on the same recipe and the same single venue:
+
+| | c (delta fixed at 1/2) | delta free |
+|---|---|---|
+| **published, AAPL, 178 days** | **c_raw 0.690** [0.63, 0.77] | **0.500** [0.32, 0.66] |
+| **here, AAPL, 127 sessions, 4,235 metaorders** | **1.514** [1.44, 1.60] | **0.408** [0.35, 0.47] |
+| here, all 108 names pooled | 1.068 [1.063, 1.073] | 0.309 [0.306, 0.313] |
+
+Our AAPL exponent is below theirs and its band excludes 0.50, though the two
+bands overlap between 0.35 and 0.47. **Our prefactor is 2.2 times theirs and the
+bands are nowhere near each other**, and the gap is not the venue-volume
+convention: consolidated volume would raise our c further, not lower it. The
+cross-sectional median c of 1.097 sits in the same place, so whatever the
+difference is, it is not AAPL-specific. Their bias-corrected c_eff of 0.34 is
+**not recomputed here**: the abstract states it without stating the correction,
+and inventing one that lands on 0.34 would be fitting to the answer.
+
+### Pending: the consolidated normaliser
+
+Every V_D and sigma_D above is single-venue Nasdaq, which is the same feed the
+published study used, so that comparison is like for like. A second normaliser
+using consolidated CRSP daily volume and trailing 20-day close-to-close
+volatility would change the LEVEL of c and not the exponent.
+`cross_section.consolidated_normalisers` is a stub that **raises** rather than
+falling back, because a silent fallback would let a consolidated claim be made
+from single-venue data. WRDS was refusing logins from this machine when this
+branch was built and no result in this section depends on it.
+
+```bash
+export SP500_MEMBERSHIP_PARQUET=~/path/to/sp500_membership_daily.parquet
+python scripts/build_cross_section_sample.py --confirm
+python scripts/fetch_cross_section_trades.py --confirm
+python scripts/validate_trade_bars.py --symbol AAPL
+python scripts/build_cross_section_metaorders.py
+python scripts/run_cross_section.py
+```
+
+---
+
 ## Repository layout
 
 | | |
@@ -636,6 +858,7 @@ python scripts/run_flow_comparison.py
 | `metaorder_impact.py` | impact against participation on reconstructed metaorders |
 | `impact_model.py` | the original piecewise model and the Almgren-Chriss allocator |
 | `panel.py` | one loader for the fifteen sessions |
+| `cross_section.py` | stratified sampling, trades to bars, and the robust cross-sectional regression |
 | `scripts/build_*.py` | raw vendor data to committed derived series; `build_1s_bars.py --bin-ms` for sub-second grids |
 | `scripts/run_*.py` | derived series to the tables above |
 | `data/`, `reports/` | derived aggregates and results; see `DATA.md` |

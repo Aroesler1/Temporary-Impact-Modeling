@@ -170,3 +170,125 @@ having builders at all.
 Databento data is accessed under a programme licence; only small derived
 aggregates are published. The work-trial data is proprietary to its provider and
 is neither published nor relied upon for any stated result.
+
+---
+
+# The cross-sectional sample (TIM-XS)
+
+A separate pull, a separate scope, and the only cross-sectional statement
+anywhere in this repository. **S&P 500 members, Nasdaq venue only, April to
+September 2024.** Not market-wide, not a regime.
+
+## Universe and stratification
+
+Membership is point in time from the alpha repository's local
+`sp500_membership_daily.parquet` on **2024-06-28**: 503 active names, no WRDS
+query. Two of them, BF and BRK, do not resolve as raw symbols on `XNAS.ITCH`
+(the dotted share classes), and names printing on fewer than 15 Nasdaq sessions
+in June are dropped, leaving **501**.
+
+Stratification variables come from `ohlcv-1d` for June 2024, priced at
+**$0.0000** for all 503 symbols before the pull:
+
+* **relative tick size** = one cent over the June mean close, spanning
+  1.32e-06 to 1.00e-03 across the drawn names;
+* **dollar volume** = June mean close times June mean Nasdaq volume, spanning
+  $5.6M to $6,559M a day.
+
+Both are cut into terciles BY RANK, so the nine crossed cells are equal in
+count rather than dominated by whichever variable is more skewed. Twelve names
+are drawn at random from each cell with **seed 20240628**, written down here
+before any trade was requested. No cell was short.
+
+| cell (tick tercile x dollar-volume tercile) | available | drawn | names |
+|---|---:|---:|---|
+| high tick x high volume | 44 | 12 | BKR, C, CMCSA, CSX, EBAY, ETSY, FCX, FITB, HBAN, KHC, UAL, UBER |
+| high tick x low volume | 72 | 12 | AMCR, BALL, CFG, CMS, DOC, FE, MAS, PPL, RF, SRE, SYF, SYY |
+| high tick x mid volume | 51 | 12 | BSX, DVN, EQT, HAL, HAS, HOLX, HSIC, NDAQ, NEM, REG, SO, VTRS |
+| low tick x high volume | 78 | 12 | AAPL, ANET, BKNG, FDX, FSLR, GS, LIN, MPWR, NOW, PANW, POOL, SNPS |
+| low tick x low volume | 33 | 12 | AMP, AVB, AVY, BIO, EFX, EPAM, IT, NVR, RL, RSG, UHS, VMC |
+| low tick x mid volume | 56 | 12 | AJG, BDX, BLK, CI, COR, HUBB, ITW, MKTX, MMC, MTD, STZ, VRSN |
+| mid tick x high volume | 45 | 12 | ABBV, AEP, EA, ENPH, GOOGL, PAYX, ROST, SBUX, TER, TTWO, UPS, VST |
+| mid tick x low volume | 62 | 12 | ALLE, ATO, CBRE, DLR, DVA, EXR, GPC, MTB, OKE, OTIS, PAYC, WAB |
+| mid tick x mid volume | 60 | 12 | APH, CINF, DHI, EL, HWM, JBHT, MS, NUE, TROW, WYNN, YUM, ZBH |
+
+**Two comparison names, MSFT and INTC, are appended and flagged
+`role=comparison` in `sample.csv`.** They were not drawn by the sampler, they
+exist so the cross-section can be put beside the three-name study, and they are
+excluded from every cross-sectional statistic. AAPL was drawn, in the low tick
+by high volume cell.
+
+## The trades pull
+
+| | |
+|---|---|
+| schema | `trades` |
+| symbols | 110 (108 stratified, 2 comparison) |
+| window | 2024-04-01 to 2024-10-01 |
+| `metadata.get_billable_size` | 8,219,204,592 bytes (8.22 GB uncompressed) |
+| `metadata.get_cost` | **$0.0000** |
+
+`fetch_cross_section_trades.py` aborts on any non-zero price. The trades schema
+carries price, size and aggressor side and nothing else, which is exactly what
+the square-root law needs and a fraction of the size of MBO or MBP-10.
+
+**Layout deviation, deliberate.** The rest of this repository stores raw
+extracts as `<SYMBOL>/<YYYY-MM-DD>.<schema>.dbn.zst`, one file per symbol-day.
+For 110 symbols over 126 trading days that would be nearly 14,000 files and
+14,000 requests, so trades are stored one file per symbol over the whole range,
+`<SYMBOL>/2024-04-01_2024-10-01.trades.dbn.zst`.
+
+## Two things measured about the trades schema, not assumed
+
+Both are in `reports/cross_section/trades_validation.csv`, checked against the
+five AAPL sessions whose MBO-derived bars are committed.
+
+1. **The aggressor side convention is the OPPOSITE of MBO's.** On MBO an
+   execution's `side` is the side of the RESTING order, which is why
+   `databento_to_lobster.py` negates it. On the `trades` schema `side` is the
+   AGGRESSING side already. Built the MBO way, signed volume correlates
+   **-0.9999** with the MBO-derived series; built the trades way, **+0.9998 to
+   +0.9999**. A flipped sign would have inverted every metaorder in the study
+   and still produced a plausible exponent.
+2. **No deduplication is needed.** Sequence numbers are unique WITHIN a session;
+   a six-month file contains collisions across days because sequences reset
+   daily, and those are not duplicates. The T/F double count that
+   `build_volume_tally.py` handles on MBO does not arise here, because the
+   trades schema carries the print once.
+
+Between 17% and 22% of AAPL prints carry no side at all, about 32% of RTH
+volume. Those are the hidden prints. They count toward `volume` and toward V_D,
+because they are traded volume, and not toward `signed_vol`, because their
+direction is unknown. The direction-dominance filter therefore has them in its
+denominator, which is the conservative direction.
+
+## Normalisers
+
+Both from the Nasdaq data itself, which is the same single-venue feed
+arXiv 2606.24019 used, so the comparison with its prefactor is like for like.
+
+* **V_D**, the day's total RTH Nasdaq volume, sided and unsided prints together.
+* **sigma_D**, realised volatility from FIVE-MINUTE trade prices scaled to a
+  session. Five minutes rather than one second because a one-second trade-price
+  series is dominated by bid-ask bounce, and bounce scales with tick size, which
+  is the regressor under test. A bounce-contaminated sigma would plant the
+  result being looked for.
+
+Venue volume is roughly a third of consolidated volume for these names, so every
+participation rate here is a share of NASDAQ volume and the prefactor's level
+depends on that choice. The exponent does not.
+
+**Pending: the consolidated normaliser.** CRSP daily volume and trailing 20-day
+close-to-close volatility would be a second normaliser.
+`cross_section.consolidated_normalisers` is a stub that raises rather than
+silently falling back, because a fallback would let a consolidated claim be made
+from single-venue data. WRDS was refusing logins from this machine when this
+branch was built and nothing in the cross-section depends on it.
+
+## What is committed
+
+Per-stock fitted parameters, the sample list with its seed and cell
+assignments, and the aggregated (binned) metaorder tables, all under
+`reports/cross_section/` and `data/cross_section/`. **Never the trades**, and
+never the raw per-metaorder file: `data/cross_section/metaorders/` is
+gitignored.
