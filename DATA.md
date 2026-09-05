@@ -96,6 +96,23 @@ Derived aggregates only, about 28 MB in all.
 
 Nothing under `data/` is raw vendor data. No file contains a credential.
 
+### Not committed: the 100 ms bars
+
+`data/bars_100ms/` is gitignored. Fifteen sessions at 100 ms come to **57 MB**,
+against 28 MB for everything else here combined, which is past what belongs in a
+repository. Rebuilding it from the local MBO extracts takes **613 seconds of
+wall clock**:
+
+```bash
+python scripts/build_all_sessions.py --bin-ms 100 --out-dir data/bars_100ms
+```
+
+`--bin-ms` defaults to 1000, and at that default the builder reproduces the
+committed one-second series byte for byte, including the integer dtype of the
+`sec` column. A test asserts it. The fitted 100 ms kernels ARE committed, in
+`reports/kernel_100ms/`, so the result in section 4 of the README can be read
+without rebuilding anything.
+
 ## Rebuilding from raw
 
 Four steps, all scripted, and the whole panel takes a few minutes:
@@ -109,6 +126,7 @@ python scripts/fetch_sessions.py                  # prices the plan, downloads n
 python scripts/fetch_sessions.py --confirm        # aborts if get_cost is not $0
 python scripts/fetch_daily_reference.py --confirm
 python scripts/build_all_sessions.py              # MBO -> messages -> L1 book -> bars + metaorders
+python scripts/build_all_sessions.py --bin-ms 100 --out-dir data/bars_100ms   # optional, 613 s, 57 MB
 python scripts/build_bookwalk.py                  # MBP-10 -> ladder cost bins
 python scripts/build_ofi_bars.py                  # MBP-10 -> one-second OFI
 python scripts/build_volume_tally.py

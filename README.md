@@ -25,7 +25,7 @@ the first is the one a desk can do least with.
 |---|---|---|---|
 | **Contemporaneous R²** | how much of the price change over a bin does flow *in that same bin* explain | **No.** The flow is not known until the bin is over. It describes; it cannot be acted on. | 0.198 to 0.542 across sessions |
 | **Predictive R²** | how much of the price change does *past* flow explain | **Yes, in principle.** This is the number that would be alpha. | −0.0010 to +0.0056. Positive on 11 of 15 sessions, and never above six thousandths |
-| **Conditional impact accuracy** | given an order's size and the seconds it executed over, how close was the *predicted* impact to the *realised* impact of that order, out of sample | **This is what an execution model is for.** Not alpha; cost. | best model reaches R² 0.12 (median), and is 23% miscalibrated |
+| **Conditional impact accuracy** | given an order's size and the seconds it executed over, how close was the *predicted* impact to the *realised* impact of that order, out of sample | **This is what an execution model is for.** Not alpha; cost. | best model reaches median R² 0.21 and is calibrated to within 10% at the top decile |
 
 The README leads with the second and the third. The first is reported because it
 is large and because leaving it out would be its own kind of dishonesty, but a
@@ -83,13 +83,13 @@ Four things fall out of that table.
    median 0.63 of the training window's, the slope is a median 0.52, and the two
    correlate at 0.68 across sessions. The model holds σ at a daily constant
    while the market it is applied to gets quieter through the day.
-4. **Replacing σ_D with a causal trailing estimate is the only thing that gets
-   the sign of the error right.** Volatility over the 30 minutes *before* each
-   order, available at decision time with no look-ahead, turns the median R² from
-   −0.33 to **+0.12**, the only positive number in the table. It over-corrects:
-   the slope goes to 1.23 and the pooled decile ratios sit near 1.5, so the
-   trailing one-second estimate falls through the day faster than impact does.
-   The calibrated answer is between the two, and neither end is it.
+4. **Replacing σ_D with a causal trailing estimate gets the sign of the error
+   right but overshoots.** Volatility over the 30 minutes *before* each order,
+   available at decision time with no look-ahead, turns the median R² from
+   −0.33 to **+0.12**. It over-corrects: the slope goes to 1.23 and the pooled
+   decile ratios sit near 1.5, so the trailing one-second estimate falls through
+   the day faster than impact does. The calibrated answer is between the two,
+   and the next subsection finds it.
 
 Pooled calibration by predicted-impact decile, propagator with a fitted level:
 
@@ -105,6 +105,91 @@ Pooled calibration by predicted-impact decile, propagator with a fitted level:
 The top decile is where it fails, and that is the decile a desk cares about: the
 largest orders are over-predicted by 39%. Full tables in
 `reports/conditional_impact/`.
+
+### Which volatility belongs in the square-root model
+
+Two more causal candidates, each fitted on the first 70% of a session and scored
+on exactly the same held-out orders as the four above.
+
+**A geometric blend**, `σ_D^α · σ_trail^(1−α)`, with α fitted in sample on the
+training metaorders.
+
+**A time-of-day profile**, `σ_D` times a half-hour multiplier: the median ratio
+of one-second realised volatility in each half hour to the whole day's. That
+multiplier cannot come from the scored session's own training window, because
+the training window is the first 70% of the day and every held-out order starts
+in a half hour it never reaches. It is estimated from other sessions of the
+**same symbol**, never across symbols, in two variants: `loso` uses the symbol's
+other four sessions, which is cross-validated but not strictly causal since some
+donors are later days, and `prior` uses only sessions before the scored one,
+which is strictly causal and leaves the earliest session of each symbol
+unscored.
+
+| model | sessions | median OOS R² | mean R², band by symbol-day | median slope | top-decile ratio |
+|---|---:|---:|---|---:|---:|
+| propagator | 15 | −2.035 | [−14.32, −3.00] | 0.334 | 0.289 |
+| propagator, rescaled | 15 | −0.017 | [−0.387, 0.088] | 0.524 | 0.615 |
+| square root, σ_D | 15 | −0.327 | [−0.467, −0.081] | 0.520 | 0.638 |
+| square root, σ trailing 30 min | 15 | 0.120 | [0.069, 0.161] | 1.234 | 1.387 |
+| **square root, geometric blend** | 15 | **0.044** | [−0.103, 0.141] | 0.615 | 0.709 |
+| **square root, time-of-day (loso)** | 15 | **0.176** | [0.160, 0.238] | 0.834 | **1.011** |
+| **square root, time-of-day (prior only)** | 12 | **0.206** | [0.160, 0.255] | 0.955 | 1.096 |
+| square root, rate term | 15 | −0.257 | [−0.332, −0.009] | 0.570 | 0.669 |
+
+**The time-of-day profile wins, and the blend loses to the row it was built
+from.** Three things to read off it.
+
+- **The top decile is no longer over-predicted.** The plain square-root model
+  over-predicts the largest orders by 57% (ratio 0.638); the time-of-day model
+  lands at **1.011** on the leave-one-session-out variant and 1.096 on the
+  strictly causal one, so it is calibrated to within 1% and 10% respectively
+  where a desk actually cares. Neither is a tuned result: the multiplier is a
+  shape borrowed from other days and nothing in it was fitted to the top decile.
+- **The strictly causal variant is the better one**, median R² 0.206 against
+  0.176, on the 12 sessions that have a prior donor. Using later days as donors
+  does not help, which is the reassuring direction for the look-ahead question
+  to fall.
+- **The blend is worse than either end it interpolates**, median R² 0.044
+  against 0.120 for pure trailing σ, and the reason is visible in α: it comes
+  out at a mean of **0.721** (range 0.430 to 0.970), leaning heavily on daily σ.
+  Fitting α in sample picks too much daily σ because *in the training window the
+  daily constant is not yet wrong*. The error it is meant to correct only appears
+  in the window it is not fitted on. This is a clean example of an in-sample
+  criterion selecting the wrong model for an out-of-sample job, and it is
+  reported because it went the wrong way.
+
+### Does the rate of execution matter
+
+Zarinelli, Treccani, Farmer and Lillo
+([2015](https://arxiv.org/abs/1412.2152)) find that impact depends on how fast
+an order is worked, not only on its size, with a logarithmic correction:
+
+    I / σ = c (Q/V)^δ (1 + k log rate)
+
+`rate` here is Q over the total volume traded during the order's own execution
+window, so it is 1 when the order was the only thing that traded and small when
+it was a minor part of a busy stretch. Its median on the held-out orders is
+**0.422**. All three parameters are fitted on the training 70% at a constant
+daily σ, so the contrast against the plain square-root row is the rate term and
+nothing else.
+
+| | value |
+|---|---|
+| k, mean over 15 sessions | **+0.0742** |
+| band by symbol-day | **[+0.0536, +0.0907]** |
+| distinguishable from zero | **yes**, the band excludes it |
+| sign | **positive** on 14 of 15 sessions |
+| median OOS R² | −0.257, against −0.327 without the term |
+| top-decile ratio | 0.669, against 0.638 without the term |
+
+**The rate term is real, correctly signed, and too small to matter.** Positive k
+means impact rises with the rate of execution, which is the direction Zarinelli
+and co-authors report, and the band excludes zero comfortably. But it moves the
+median R² from −0.327 to −0.257 and the top-decile calibration ratio from 0.638
+to 0.669, against 1.011 for simply putting the right volatility in. For
+reference the rescaled propagator's top decile sits at 0.615. **On this data the
+level of σ is worth an order of magnitude more than the rate of execution**, and
+a desk fixing one thing should fix the volatility.
 
 ### The two-day numbers, restated across fifteen sessions
 
@@ -430,8 +515,58 @@ reporting luck:
   round trip with negative expected cost. The check is in
   `reports/schedule/kernel_diagnostics.csv` rather than assumed.
 
+### The kernel at 100 ms
+
+The obvious objection to "the optimal schedule is TWAP" is that one second is
+too coarse to resolve the relaxation, since the propagator literature usually
+works in trade or event time. `scripts/build_1s_bars.py --bin-ms 100` rebuilds
+the panel at 100 ms from the same local MBO extracts, and the propagator is
+refitted with the same 70/30 split and the same `(delta, L)` selection rule.
+
+The test has two criteria, and on this data **they disagree**, so both are
+reported rather than collapsed into one verdict.
+
+| criterion | result | met? |
+|---|---|---|
+| selected L above 1 on most sessions | 12 of 15, median selected L = 20 | yes |
+| `G(1)/G(0)` clearly nonzero | mean **+0.0020**, band **[−0.0169, +0.0310]** | **no**, the band contains zero |
+
+![Kernel shape at 100 ms](figs/kernel_100ms.png)
+
+Kernel shape, refitted at a fixed L = 20 with each session's own selected delta
+so the fifteen shapes are the same length and can be averaged, mean over 15
+symbol-days with a bootstrap band by symbol-day:
+
+| lag (100 ms bins) | 1 | 2 | 3 | 5 | 9 | 11 | 15 | 20 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| G(l)/G(0) | +0.0020 | −0.0053 | −0.0066 | −0.0017 | −0.0058 | −0.0063 | −0.0026 | −0.0066 |
+| band low | −0.0169 | −0.0098 | −0.0112 | −0.0049 | −0.0081 | −0.0086 | −0.0061 | −0.0127 |
+| band high | +0.0310 | −0.0013 | −0.0015 | +0.0017 | −0.0033 | −0.0038 | +0.0021 | −0.0028 |
+
+**Verdict: the decay is not visible at 100 ms. Relaxation on these three names
+is complete within 100 ms at this resolution**, the first lag carries nothing
+distinguishable from zero, and the scheduling result of section 4 stands: there
+is no kernel memory for a schedule to exploit. Finer bars were the strongest
+available objection to that result and they do not rescue it.
+
+What is there instead is not decay. **15 of the 19 lags from 2 to 20 have bands
+excluding zero, and all 15 are negative**, averaging **−0.0049 of G(0)**. A
+transient-impact kernel decays from positive toward zero; this one crosses
+straight through to a small persistent negative tail, which is price reverting
+after flow rather than impact relaxing. That tail is what the selected L is
+picking up, and it buys a median **+0.00170** of out-of-sample R². Explanatory
+R² at 100 ms is 0.180 to 0.501, in the same range as at one second.
+
+**What finer resolution costs.** Building 100 ms bars for all fifteen sessions
+from the local MBO extracts took **613 seconds of wall clock** and produced
+**57 MB** on disk, against 28 MB for everything currently committed. That is
+past what belongs in a repository, so the series is gitignored and DATA.md
+carries the one command that rebuilds it. The fitted kernels are committed
+instead, in `reports/kernel_100ms/`.
+
 ```bash
-python scripts/run_schedule_oos.py
+python scripts/build_all_sessions.py --bin-ms 100 --out-dir data/bars_100ms
+python scripts/run_kernel_100ms.py
 ```
 
 ---
@@ -501,7 +636,7 @@ python scripts/run_flow_comparison.py
 | `metaorder_impact.py` | impact against participation on reconstructed metaorders |
 | `impact_model.py` | the original piecewise model and the Almgren-Chriss allocator |
 | `panel.py` | one loader for the fifteen sessions |
-| `scripts/build_*.py` | raw vendor data to committed derived series |
+| `scripts/build_*.py` | raw vendor data to committed derived series; `build_1s_bars.py --bin-ms` for sub-second grids |
 | `scripts/run_*.py` | derived series to the tables above |
 | `data/`, `reports/` | derived aggregates and results; see `DATA.md` |
 

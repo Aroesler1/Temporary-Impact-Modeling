@@ -102,3 +102,71 @@ def test_mismatched_book_and_message_files_are_rejected(tmp_path):
              "ask_px_0": 1_000_100, "ask_sz_0": 5}]
     with pytest.raises(SystemExit):
         build(*_write(tmp_path, messages, book))
+
+
+# --------------------------------------------------------------------------
+# --bin-ms: finer bars, with the one-second grid bit for bit unchanged
+# --------------------------------------------------------------------------
+
+def _fine_fixture(tmp_path):
+    """Two fills 300 ms apart inside one second, and one in the next second."""
+    messages = [_msg(RTH_OPEN + 0.10, 4, -1, 100),
+                _msg(RTH_OPEN + 0.40, 4, -1, 40),
+                _msg(RTH_OPEN + 1.25, 4, 1, 70)]
+    book = [{"timestamp": m["time"], "bid_px_0": 999_900, "bid_sz_0": 5,
+             "ask_px_0": 1_000_100 + 100 * i, "ask_sz_0": 5}
+            for i, m in enumerate(messages)]
+    return _write(tmp_path, messages, book)
+
+
+def test_bin_ms_defaults_to_one_second_and_changes_nothing(tmp_path):
+    """The default must reproduce the pre-option output exactly, including the
+    integer dtype of `sec`: the committed series were written that way and a
+    float column would rewrite every row of every file."""
+    m, b = _fine_fixture(tmp_path)
+    default = build(m, b)
+    explicit = build(m, b, bin_ms=1000)
+    pd.testing.assert_frame_equal(default, explicit)
+    assert default.sec.dtype.kind == "i"
+    assert list(default.sec) == [RTH_OPEN, RTH_OPEN + 1]
+    # the two fills inside the first second are still summed into one row
+    assert list(default.signed_vol) == [140.0, -70.0]
+    assert list(default.volume) == [140.0, 70.0]
+
+
+def test_bin_ms_splits_a_second_into_finer_bars(tmp_path):
+    m, b = _fine_fixture(tmp_path)
+    fine = build(m, b, bin_ms=100)
+    assert list(fine.sec) == [RTH_OPEN + 0.1, RTH_OPEN + 0.4, RTH_OPEN + 1.2]
+    assert list(fine.signed_vol) == [100.0, 40.0, -70.0]
+
+
+def test_bin_ms_conserves_volume_across_widths(tmp_path):
+    m, b = _fine_fixture(tmp_path)
+    coarse = build(m, b, bin_ms=1000)
+    fine = build(m, b, bin_ms=100)
+    assert fine.volume.sum() == pytest.approx(coarse.volume.sum())
+    assert fine.signed_vol.sum() == pytest.approx(coarse.signed_vol.sum())
+    assert len(fine) >= len(coarse)
+
+
+def test_bin_ms_keeps_the_last_mid_in_each_bin(tmp_path):
+    """At one second the two early fills collapse to the LAST mid; at 100 ms
+    they keep their own."""
+    m, b = _fine_fixture(tmp_path)
+    coarse = build(m, b, bin_ms=1000)
+    fine = build(m, b, bin_ms=100)
+    assert coarse.mid.iloc[0] == pytest.approx(fine.mid.iloc[1])
+    assert fine.mid.iloc[0] != fine.mid.iloc[1]
+
+
+def test_bin_ms_start_is_integral_only_when_the_bin_divides_a_second(tmp_path):
+    m, b = _fine_fixture(tmp_path)
+    assert build(m, b, bin_ms=2000).sec.dtype.kind == "i"
+    assert build(m, b, bin_ms=250).sec.dtype.kind == "f"
+
+
+def test_bin_ms_rejects_a_non_positive_width(tmp_path):
+    m, b = _fine_fixture(tmp_path)
+    with pytest.raises(SystemExit):
+        build(m, b, bin_ms=0)

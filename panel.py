@@ -66,6 +66,23 @@ def bars_with_ofi(session: str) -> pd.DataFrame:
 
 
 @lru_cache(maxsize=32)
+def fine_bars(session: str, bin_ms: int = 100) -> pd.DataFrame:
+    """Sub-second bars, if they have been built.
+
+    These are NOT committed: 100 ms bars for the panel run to about 170 MB, well
+    past what belongs in a repository. `DATA.md` carries the one command that
+    rebuilds them from the local MBO extracts.
+    """
+    path = DATA / f"bars_{bin_ms}ms" / f"{session}_{bin_ms}ms.csv"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} not found. Build it with:\n"
+            f"  python scripts/build_all_sessions.py --bin-ms {bin_ms} "
+            f"--out-dir data/bars_{bin_ms}ms")
+    return pd.read_csv(path).sort_values("sec").reset_index(drop=True)
+
+
+@lru_cache(maxsize=32)
 def metaorders(session: str) -> pd.DataFrame:
     return pd.read_csv(DATA / f"{session}_metaorders.csv")
 
