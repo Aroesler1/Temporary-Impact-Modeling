@@ -1,0 +1,2 @@
+report_version,train_rule,test_rule,crossing_rule,train_fraction,n_sessions,n_crossing_orders_excluded
+outcome-end-v2,t_start < split_second and t_end < split_second,t_start >= split_second,excluded from both train and test,0.7,15,8

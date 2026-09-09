@@ -92,12 +92,13 @@ is the corresponding level response.
 
 ### The headline: conditional impact accuracy
 
-Every reconstructed metaorder starting inside the held-out last 30% of a session
-gets a predicted impact from a kernel fitted strictly inside the first 70%,
-using only that order's own flow. R² below is of realised on predicted with **no
-refit**: the model's own number, not a line drawn through it afterwards.
-Training calibration now also requires each order's outcome to finish before
-the split; an order crossing the boundary is excluded from training.
+The table below is the corrected `outcome-end-v2` reproduction. Every
+reconstructed metaorder starting inside the held-out last 30% of a session gets
+a predicted impact from a kernel fitted strictly inside the first 70%, using
+only that order's own flow. R² is of realised on predicted with **no refit**:
+the model's own number, not a line drawn through it afterwards. Training
+calibration requires each order's outcome to finish before the split. Eight
+orders cross that boundary and are excluded from both training and evaluation.
 
 | model | what it gets to fit in sample | median OOS R² | median slope of realised on predicted |
 |---|---|---:|---:|
@@ -105,6 +106,16 @@ the split; an order crossing the boundary is excluded from training.
 | propagator, rescaled on training metaorders | kernel shape, plus one level | **−0.02** | 0.52 |
 | square root, `I = c σ_D √(Q/V)` | one level, c | **−0.33** | 0.52 |
 | square root, σ from the trailing 30 minutes | one level, c | **+0.12** | 1.23 |
+
+Corrected reports, split diagnostics, and committed-input hashes are in
+`reports/conditional_impact_corrected/`. The pre-repair files remain unchanged
+in `reports/conditional_impact/` as historical evidence. Rebuild and compare
+the corrected files with
+`python scripts/run_conditional_impact.py --check`.
+The exclusions do not change any headline above at the displayed precision;
+across all eight models, the largest absolute change in median R² is 0.00033.
+That stability is a corrected reproduction result, not an assumption that the
+old files survived the cutoff repair.
 
 Four things fall out of that table.
 
@@ -146,8 +157,8 @@ Pooled calibration by predicted-impact decile, propagator with a fitted level:
 | 9 | 0.000405 | 0.000249 | 0.61 | 4,759 |
 
 The top decile is where it fails, and that is the decile a desk cares about: the
-largest orders are over-predicted by 39%. Full tables in
-`reports/conditional_impact/`.
+largest orders are over-predicted by 39%. Corrected full tables are in
+`reports/conditional_impact_corrected/`.
 
 ### Which volatility belongs in the square-root model
 

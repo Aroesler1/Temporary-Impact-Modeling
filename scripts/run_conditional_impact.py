@@ -16,7 +16,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
+import tempfile
 import warnings
 from pathlib import Path
 
@@ -28,6 +30,52 @@ import pandas as pd  # noqa: E402
 
 import panel  # noqa: E402
 from conditional_impact import MODEL_ORDER, evaluate_session, halfhour_ratios  # noqa: E402
+
+ARTIFACTS = (
+    "summary.csv",
+    "calibration_by_decile.csv",
+    "calibration_pooled.csv",
+    "model_comparison.csv",
+    "historical_vs_corrected.csv",
+    "input_manifest.csv",
+    "methodology.csv",
+)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def input_manifest() -> pd.DataFrame:
+    """Hash every committed aggregate input used by the reproduction."""
+    paths = [
+        panel.DATA / "session_meta.csv",
+        panel.DATA.parent
+        / "reports"
+        / "conditional_impact"
+        / "model_comparison.csv",
+    ]
+    for session in panel.session_keys():
+        paths.extend(
+            [
+                panel.DATA / f"{session}_1s.csv",
+                panel.DATA / f"{session}_metaorders.csv",
+            ]
+        )
+    return pd.DataFrame(
+        [
+            {
+                "path": path.relative_to(panel.DATA.parent).as_posix(),
+                "bytes": path.stat().st_size,
+                "sha256": _sha256(path),
+            }
+            for path in paths
+        ]
+    )
 
 
 def build_profiles() -> tuple[dict[str, pd.Series], dict[str, pd.Series]]:
@@ -80,11 +128,9 @@ def band(values: np.ndarray, n_boot: int = 4000, seed: int = 0) -> tuple[float, 
     return tuple(float(v) for v in np.percentile(draws, [2.5, 97.5]))
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--out-dir", type=Path, default=Path("reports/conditional_impact"))
-    args = ap.parse_args()
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+def build(out_dir: Path) -> None:
+    """Rebuild the corrected reports from committed offline inputs."""
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     loso, prior = build_profiles()
     rows, tables = [], {name: [] for name in MODEL_ORDER}
@@ -96,7 +142,10 @@ def main() -> int:
                                   tod_profile_loso=loso[key],
                                   tod_profile_prior=prior[key])
         row = {"session": key, "symbol": scales.symbol,
+               "split_second": result.split_second,
+               "n_train_orders": result.n_train,
                "n_test_orders": result.n_test,
+               "n_crossing_orders_excluded": result.n_crossing_excluded,
                "delta": result.calibration.delta,
                "n_lags": result.calibration.n_lags, **result.params}
         for name in MODEL_ORDER:
@@ -111,10 +160,10 @@ def main() -> int:
         rows.append(row)
 
     summary = pd.DataFrame(rows)
-    summary.to_csv(args.out_dir / "summary.csv", index=False)
+    summary.to_csv(out_dir / "summary.csv", index=False)
     pd.concat([t for name in MODEL_ORDER for t in tables[name]],
               ignore_index=True).to_csv(
-        args.out_dir / "calibration_by_decile.csv", index=False)
+        out_dir / "calibration_by_decile.csv", index=False)
 
     print("CONDITIONAL IMPACT ACCURACY, held-out 30% of each session")
     print("R2 is of realised on predicted with NO refit: the model's own "
@@ -125,7 +174,7 @@ def main() -> int:
 
     pooled = {name: pool(tables[name]) for name in MODEL_ORDER if tables[name]}
     pd.concat([t.assign(model=n) for n, t in pooled.items()]).to_csv(
-        args.out_dir / "calibration_pooled.csv")
+        out_dir / "calibration_pooled.csv")
 
     print("\n\nMODEL COMPARISON, median over the 15 symbol-days, with a "
           "bootstrap band by symbol-day")
@@ -148,7 +197,27 @@ def main() -> int:
             "decile_1_to_8_ratio": float(pooled[name].ratio.iloc[:-1].abs().mean()),
         })
     comparison = pd.DataFrame(lines)
-    comparison.to_csv(args.out_dir / "model_comparison.csv", index=False)
+    comparison.to_csv(out_dir / "model_comparison.csv", index=False)
+    historical_path = (
+        panel.DATA.parent
+        / "reports"
+        / "conditional_impact"
+        / "model_comparison.csv"
+    )
+    historical = pd.read_csv(historical_path)
+    paired = historical.merge(
+        comparison,
+        on="model",
+        how="outer",
+        suffixes=("_historical", "_corrected"),
+        validate="one_to_one",
+    )
+    for column in ("median_r2", "median_slope", "top_decile_ratio"):
+        paired[f"{column}_change"] = (
+            paired[f"{column}_corrected"]
+            - paired[f"{column}_historical"]
+        )
+    paired.to_csv(out_dir / "historical_vs_corrected.csv", index=False)
     print(comparison.to_string(index=False, float_format=lambda v: f"{v:0.4f}"))
 
     for name in MODEL_ORDER:
@@ -173,7 +242,54 @@ def main() -> int:
     print(f"\nblend alpha: mean {summary.blend_alpha.mean():.3f}, "
           f"range {summary.blend_alpha.min():.3f} to {summary.blend_alpha.max():.3f} "
           f"(1 is all daily sigma, 0 is all trailing sigma)")
-    print(f"\nsaved -> {args.out_dir}")
+    input_manifest().to_csv(out_dir / "input_manifest.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "report_version": "outcome-end-v2",
+                "train_rule": "t_start < split_second and t_end < split_second",
+                "test_rule": "t_start >= split_second",
+                "crossing_rule": "excluded from both train and test",
+                "train_fraction": panel.TRAIN_FRAC,
+                "n_sessions": len(summary),
+                "n_crossing_orders_excluded": int(
+                    summary["n_crossing_orders_excluded"].sum()
+                ),
+            }
+        ]
+    ).to_csv(out_dir / "methodology.csv", index=False)
+    print(f"\nsaved -> {out_dir}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path("reports/conditional_impact_corrected"),
+    )
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="rebuild in a temporary directory and compare committed artifacts",
+    )
+    args = ap.parse_args()
+    if not args.check:
+        build(args.out_dir)
+        return 0
+
+    with tempfile.TemporaryDirectory(prefix="impact-conditional-check-") as raw:
+        rebuilt = Path(raw)
+        build(rebuilt)
+        stale = [
+            name
+            for name in ARTIFACTS
+            if not (args.out_dir / name).exists()
+            or (args.out_dir / name).read_bytes() != (rebuilt / name).read_bytes()
+        ]
+    if stale:
+        raise SystemExit(f"stale corrected conditional reports: {', '.join(stale)}")
+    print(f"Verified {len(ARTIFACTS)} corrected conditional-impact artifacts.")
     return 0
 
 

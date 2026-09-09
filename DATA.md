@@ -304,6 +304,14 @@ assignments, and the aggregated (binned) metaorder tables, all under
 never the raw per-metaorder file: `data/cross_section/metaorders/` is
 gitignored.
 
+`reports/conditional_impact/` preserves the historical pre-cutoff-repair
+tables. `reports/conditional_impact_corrected/` is rebuilt from the committed
+one-second bars and aggregate metaorders with `outcome-end-v2`: training orders
+must finish before the split, and the eight crossing orders are excluded from
+both sides. Its input manifest hashes all 32 committed inputs. No vendor client
+or external cache is used. Verify it with
+`python scripts/run_conditional_impact.py --check`.
+
 ## Audit derived from existing committed tables, 2026-09-06
 
 `reports/kernel_audit/` contains four small CSVs: normalized return versus

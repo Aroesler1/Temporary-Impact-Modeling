@@ -444,7 +444,10 @@ class SessionResult:
     scores: dict[str, dict] = field(default_factory=dict)
     tables: dict[str, pd.DataFrame] = field(default_factory=dict)
     params: dict[str, float] = field(default_factory=dict)
+    split_second: float = float("nan")
+    n_train: int = 0
     n_test: int = 0
+    n_crossing_excluded: int = 0
 
     def r2(self, model: str) -> float:
         return self.scores.get(model, {}).get("r2_no_refit", float("nan"))
@@ -485,10 +488,16 @@ def evaluate_session(session: str, bars: pd.DataFrame, orders: pd.DataFrame,
     train_end = int(len(bars) * train_frac)
     cal = calibrate_on_window(bars, train_end)
     orders = orders[(orders.mid_start > 0) & (orders.shares > 0)].copy()
-    train_orders, test_orders, _ = split_orders_for_evaluation(
+    train_orders, test_orders, split_second = split_orders_for_evaluation(
         bars,
         orders,
         train_frac=train_frac,
+    )
+    crossing = (
+        (orders.t_start < split_second)
+        & (orders.t_end >= split_second)
+        & (orders.t_start >= float(bars["sec"].iloc[0]))
+        & (orders.t_end <= float(bars["sec"].iloc[-1]))
     )
     if len(test_orders) < 50 or len(train_orders) < 50:
         raise ValueError(f"{session}: too few orders either side of the split")
@@ -558,5 +567,9 @@ def evaluate_session(session: str, bars: pd.DataFrame, orders: pd.DataFrame,
         scores={name: _scores(realised, pred) for name, pred in predictions.items()},
         tables={name: calibration_table(realised, pred)
                 for name, pred in predictions.items()},
-        params=params, n_test=int(len(test_orders)),
+        params=params,
+        split_second=split_second,
+        n_train=int(len(train_orders)),
+        n_test=int(len(test_orders)),
+        n_crossing_excluded=int(crossing.sum()),
     )

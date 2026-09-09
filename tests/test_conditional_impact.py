@@ -162,8 +162,21 @@ def test_evaluate_session_scores_a_perfect_model_near_one():
         "t_start": sec, "t_end": sec,
         "mid_start": np.r_[100.0, mid[:-1]], "mid_end": mid,
     })
+    split_second = float(bars["sec"].iloc[int(n * 0.7)])
+    orders.loc[len(orders)] = {
+        "sign": 1.0,
+        "shares": 10.0,
+        "t_start": split_second - 0.5,
+        "t_end": split_second + 0.5,
+        "mid_start": 100.0,
+        "mid_end": 100.0,
+    }
     result = ci.evaluate_session("SYNTH", bars, orders, session_volume=1e7,
                                  sigma_d=0.02)
+    assert result.split_second == split_second
+    assert result.n_train == 4200
+    assert result.n_test == 1800
+    assert result.n_crossing_excluded == 1
     assert result.calibration.delta == 1.0
     assert result.r2("propagator") > 0.99
     assert result.scores["propagator"]["slope"] == pytest.approx(1.0, abs=0.02)
