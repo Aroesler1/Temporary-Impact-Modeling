@@ -450,6 +450,26 @@ class SessionResult:
         return self.scores.get(model, {}).get("r2_no_refit", float("nan"))
 
 
+def split_orders_for_evaluation(
+    bars: pd.DataFrame,
+    orders: pd.DataFrame,
+    *,
+    train_frac: float,
+) -> tuple[pd.DataFrame, pd.DataFrame, float]:
+    """Split orders without admitting training outcomes across the boundary."""
+    train_end = int(len(bars) * train_frac)
+    if train_end <= 0 or train_end >= len(bars):
+        raise ValueError("train_frac leaves an empty bar window")
+    split_second = float(bars["sec"].iloc[train_end])
+    lo, hi = float(bars["sec"].iloc[0]), float(bars["sec"].iloc[-1])
+    in_grid = (orders.t_start >= lo) & (orders.t_end <= hi)
+    # Strict t_end < split_second prevents a training target, trailing
+    # normaliser, or realised impact from observing any evaluation-period bar.
+    train = orders[in_grid & (orders.t_start < split_second) & (orders.t_end < split_second)]
+    test = orders[in_grid & (orders.t_start >= split_second)]
+    return train.copy(), test.copy(), split_second
+
+
 def evaluate_session(session: str, bars: pd.DataFrame, orders: pd.DataFrame,
                      session_volume: float, sigma_d: float,
                      train_frac: float = 0.7,
@@ -464,15 +484,12 @@ def evaluate_session(session: str, bars: pd.DataFrame, orders: pd.DataFrame,
     """
     train_end = int(len(bars) * train_frac)
     cal = calibrate_on_window(bars, train_end)
-    split_second = float(bars["sec"].iloc[train_end])
-
     orders = orders[(orders.mid_start > 0) & (orders.shares > 0)].copy()
-    # bars are RTH only, so only orders inside the bar grid can be priced by a
-    # kernel estimated on it
-    lo, hi = float(bars["sec"].iloc[0]), float(bars["sec"].iloc[-1])
-    in_grid = (orders.t_start >= lo) & (orders.t_end <= hi)
-    train_orders = orders[in_grid & (orders.t_start < split_second)]
-    test_orders = orders[in_grid & (orders.t_start >= split_second)]
+    train_orders, test_orders, _ = split_orders_for_evaluation(
+        bars,
+        orders,
+        train_frac=train_frac,
+    )
     if len(test_orders) < 50 or len(train_orders) < 50:
         raise ValueError(f"{session}: too few orders either side of the split")
 

@@ -3,7 +3,7 @@
 THE CROSSOVER
 -------------
 The square-root law is not supposed to hold all the way down. Bucci, Benzaquen,
-Lillo and Bouchaud (Physical Review Letters 123, 106401, 2019, arXiv 1901.05332)
+Lillo and Bouchaud (Physical Review Letters 122, 108302, 2019, doi:10.1103/PhysRevLett.122.108302)
 argue that below some participation the relation must be LINEAR, because impact
 has to be additive for infinitesimal orders, and that the crossover sits where
 the metaorder size is comparable to the volume traded in the time it takes the

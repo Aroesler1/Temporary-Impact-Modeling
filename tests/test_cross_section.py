@@ -217,8 +217,8 @@ def test_ols_robust_refuses_an_underdetermined_fit():
                       pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]}))
 
 
-def test_consolidated_normaliser_is_a_raising_stub():
-    """It must fail loudly rather than fall back to venue volume and let a
-    consolidated claim be made from single-venue data."""
-    with pytest.raises(NotImplementedError, match="pending row"):
+def test_consolidated_normaliser_requires_external_verified_cache(monkeypatch):
+    """It must fail loudly rather than substitute single-venue data."""
+    monkeypatch.delenv("IMPACT_CRSP_CACHE_DIR", raising=False)
+    with pytest.raises(FileNotFoundError, match="IMPACT_CRSP_CACHE_DIR"):
         cs.consolidated_normalisers(["AAPL"], "2024-04-01", "2024-09-30")

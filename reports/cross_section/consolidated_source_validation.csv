@@ -1,0 +1,2 @@
+daily_source,identifier_source,volume_unit,n_symbols_cached,n_rows_cached,date_min,date_max,nonpositive_or_missing_volume,midpoint_price_flags,equs_overlap_days,equs_median_crsp_over_vendor,equs_p05_crsp_over_vendor,equs_p95_crsp_over_vendor
+crsp.dsf_v2,crsp.dsenames,shares,110,16280,2024-03-01,2024-10-01,0,0,7040,1.0,0.9813662642209986,1.0

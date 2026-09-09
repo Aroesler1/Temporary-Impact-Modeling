@@ -1,0 +1,3 @@
+sample,n_names,median_crossover_impact_ticks,crossover_above_one_tick
+all_fitted_including_boundaries,108,2.6454141853896855,94
+interior_crossover_only,21,2.5878223826815017,19

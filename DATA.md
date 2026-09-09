@@ -72,11 +72,13 @@ the consolidated tape. Databento reports a displayed execution twice, once as
 * every session matches the vendor's own `ohlcv-1d` volume for that date to
   within about a thousand shares.
 
-Volumes and ADV throughout the repository are **Nasdaq only**, roughly a third
-of consolidated volume for these names. Every participation rate is therefore a
-share of Nasdaq volume, the column names say so, and the ratio is used
-consistently on both sides. The level of the prefactor `c` does depend on that
-choice; the exponent does not.
+Baseline volumes and ADV throughout the repository are **Nasdaq only**. Every
+baseline participation rate is therefore a share of Nasdaq volume, and the
+column names say so. In the completed 108-name sensitivity, the median of each
+name's median consolidated-to-Nasdaq volume ratio is 7.60, with a 4.05 to 9.99
+5th-to-95th percentile range across name medians. The level of the prefactor
+`c` depends on that choice. Only a common constant rescaling necessarily
+preserves the exponent; observation-varying normalisers can change it.
 
 ## What is committed
 
@@ -274,16 +276,25 @@ arXiv 2606.24019 used, so the comparison with its prefactor is like for like.
   is the regressor under test. A bounce-contaminated sigma would plant the
   result being looked for.
 
-Venue volume is roughly a third of consolidated volume for these names, so every
-participation rate here is a share of NASDAQ volume and the prefactor's level
-depends on that choice. The exponent does not.
+Every baseline participation rate here is a share of Nasdaq volume and the
+prefactor's level depends on that choice. The completed paired check finds a
+7.60 median consolidated-to-Nasdaq ratio across name medians.
+Observation-varying normalisers may change the fitted exponent as well;
+invariance requires a common constant rescaling.
 
-**Pending: the consolidated normaliser.** CRSP daily volume and trailing 20-day
-close-to-close volatility would be a second normaliser.
-`cross_section.consolidated_normalisers` is a stub that raises rather than
-silently falling back, because a fallback would let a consolidated claim be made
-from single-venue data. WRDS was refusing logins from this machine when this
-branch was built and nothing in the cross-section depends on it.
+**Completed consolidated normaliser.** One approved foreground WRDS session on
+2026-09-08 resolved identifiers from `crsp.dsenames` and cached CIZ daily rows
+from `crsp.dsf_v2`. Volume is in shares. On 7,040 overlapping symbol-days it
+matches the independently cached `EQUS.SUMMARY` consolidated volume at a median
+ratio of 1.000, with 5th and 95th percentiles 0.981 and 1.000. Licensed rows and
+query text remain in the external cache. `IMPACT_CRSP_CACHE_DIR` points to that
+cache for offline reproduction.
+
+`cross_section.consolidated_normalisers` verifies the cache hash, source names,
+identifier uniqueness, units, dates and required coverage. A missing
+symbol-date raises; venue volume is never substituted. The paired derived
+tables in `reports/cross_section/` change volume first while holding volatility
+fixed, then change volatility separately on the identical proxy-order sample.
 
 ## What is committed
 
@@ -292,3 +303,17 @@ assignments, and the aggregated (binned) metaorder tables, all under
 `reports/cross_section/` and `data/cross_section/`. **Never the trades**, and
 never the raw per-metaorder file: `data/cross_section/metaorders/` is
 gitignored.
+
+## Audit derived from existing committed tables, 2026-09-06
+
+`reports/kernel_audit/` contains four small CSVs: normalized return versus
+cumulative level response at 100 ms intervals through two seconds, crossover
+scope using the correct interior-only denominator, reproduced headline checks,
+and an input manifest with SHA-256 hashes and the source revision. No new market
+data source was added. No raw records or per-order values are in these files.
+
+The existing `reports/schedule/` outputs and `reports/kernel_100ms/verdict.csv`
+are retained historical results whose execution and relaxation interpretations
+are withdrawn. `docs/kernel_audit.md` explains why. The coefficient inputs are
+selected-validation diagnostics, not untouched test estimates, and cumulative
+confidence limits are not inferable from their marginal intervals.

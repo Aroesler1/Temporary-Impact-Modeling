@@ -11,14 +11,47 @@ Section 6 is the one exception, and it is a narrow one: a cross-section of 108
 S&P 500 names on the Nasdaq venue only, April to September 2024, built from
 trades rather than the book. It is the only cross-sectional statement in this
 repository and it is not a market-wide one.
-It contains no market-wide stress day: no CPI print, no FOMC, no August 5th.
-One session, INTC 2024-08-02, is a single-name event day (the post-earnings
+The fifteen-session panel does not include August 5 or deliberately sample
+macro-announcement days. The six-month cross-section includes scheduled
+announcements and is not filtered into regimes.
+In the fifteen-session panel, INTC 2024-08-02, is a single-name event day (the post-earnings
 collapse), and it behaves differently from the other fourteen in almost every
-table below, which is said where it happens. Nothing here is a statement about
-US equities, about a regime, or about Nasdaq. It is a statement about three
-names on fifteen days.
+table below, which is said where it happens. Results remain limited to the
+stated panel or cross-section and do not establish population or regime effects.
 
 ---
+
+## Audit correction: returns are not price levels
+
+**On the same fifteen symbol-days, the old 100 ms relaxation and scheduling
+conclusions are withdrawn.** The regression fits returns. Its lag coefficients
+measure further price changes, while surviving price displacement is their
+cumulative sum. From the committed fitted means:
+
+| horizon | old quantity, return response / initial | corrected level response / initial |
+|---|---:|---:|
+| 100 ms | +0.002048 | **1.002048** |
+| 1 second | -0.005938 | **0.960109** |
+| 2 seconds | -0.006563 | **0.917296** |
+
+These are descriptive means over fifteen sessions, not causal effects. There
+is no cumulative confidence interval: the committed marginal intervals do not
+identify covariance across lags. The last supported horizon is two seconds.
+Zero additional return does not imply zero remaining impact.
+[Full diagnostic](reports/kernel_audit/return_vs_level.csv),
+[audit and limits](docs/kernel_audit.md), and
+[verified literature through 2026-09-06](docs/literature_audit_2026.md).
+
+```bash
+python scripts/audit_kernel_response.py --check
+```
+
+This command uses only committed aggregates and the Python standard library.
+The earlier schedule runner now refuses to publish costs until level response,
+execution-price convention and horizon are consistent. The conditional-impact
+comparison below already accumulates returns correctly; its existing numbers
+are retained. **What failed was the interpretation of return coefficients as
+lasting impact, and the execution claim built on it.**
 
 ## Three different R-squareds, and which one is which
 
@@ -28,7 +61,7 @@ the first is the one a desk can do least with.
 | | what it asks | can it be traded | this repo |
 |---|---|---|---|
 | **Contemporaneous R²** | how much of the price change over a bin does flow *in that same bin* explain | **No.** The flow is not known until the bin is over. It describes; it cannot be acted on. | 0.198 to 0.542 across sessions |
-| **Predictive R²** | how much of the price change does *past* flow explain | **Yes, in principle.** This is the number that would be alpha. | −0.0010 to +0.0056. Positive on 11 of 15 sessions, and never above six thousandths |
+| **Predictive R², selected validation** | how much of the price change does *past* flow explain | **Yes, in principle.** This is the number that would be alpha. | −0.0010 to +0.0056. Positive on 11 of 15; the same tail selected the specification |
 | **Conditional impact accuracy** | given an order's size and the seconds it executed over, how close was the *predicted* impact to the *realised* impact of that order, out of sample | **This is what an execution model is for.** Not alpha; cost. | best model reaches median R² 0.21 and is calibrated to within 10% at the top decile |
 
 The README leads with the second and the third. The first is reported because it
@@ -39,19 +72,23 @@ is the single most important thing in this repository.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests -q          # 112 tests
+python -m pytest tests -q
 ```
 
 ---
 
-## 1. Transient-impact propagator, and how well it prices a specific order
+## 1. Distributed-lag return response, and how well it prices a specific order
 
-`propagator.py` calibrates the Bouchaud-style kernel
+`propagator.py` calibrates a distributed-lag return regression
 
-    r_t  =  sum_{l=0..L} G(l) * sign(v_{t-l}) * |v_{t-l}|^delta  +  noise
+    r_t  =  sum_{l=0..L} b(l) * sign(v_{t-l}) * |v_{t-l}|^delta  +  noise
 
-on one-second bars built from Databento MBO, choosing `(delta, L)` by
-out-of-sample R² on a chronological 70/30 split.
+on one-second bars built from Databento MBO. The descriptive panel chooses
+`(delta, L)` using the last 30% and reports that same selected-validation
+score. It has no untouched test window. The conditional-impact comparison
+below instead selects inside training before evaluating its separate last 30%.
+The retained code field `kernel` denotes return coefficients b; cumulative b
+is the corresponding level response.
 
 ### The headline: conditional impact accuracy
 
@@ -59,10 +96,12 @@ Every reconstructed metaorder starting inside the held-out last 30% of a session
 gets a predicted impact from a kernel fitted strictly inside the first 70%,
 using only that order's own flow. R² below is of realised on predicted with **no
 refit**: the model's own number, not a line drawn through it afterwards.
+Training calibration now also requires each order's outcome to finish before
+the split; an order crossing the boundary is excluded from training.
 
 | model | what it gets to fit in sample | median OOS R² | median slope of realised on predicted |
 |---|---|---:|---:|
-| propagator, kernel straight off the bars | the whole kernel, on one-second flow | **−2.04** | 0.35 |
+| propagator, kernel straight off the bars | the whole kernel, on one-second flow | **−2.04** | 0.334 |
 | propagator, rescaled on training metaorders | kernel shape, plus one level | **−0.02** | 0.52 |
 | square root, `I = c σ_D √(Q/V)` | one level, c | **−0.33** | 0.52 |
 | square root, σ from the trailing 30 minutes | one level, c | **+0.12** | 1.23 |
@@ -149,11 +188,11 @@ from.** Three things to read off it.
   strictly causal one, so it is calibrated to within 1% and 10% respectively
   where a desk actually cares. Neither is a tuned result: the multiplier is a
   shape borrowed from other days and nothing in it was fitted to the top decile.
-- **The strictly causal variant is the better one**, median R² 0.206 against
-  0.176, on the 12 sessions that have a prior donor. Using later days as donors
-  does not help, which is the reassuring direction for the look-ahead question
-  to fall.
-- **The blend is worse than either end it interpolates**, median R² 0.044
+- **The strictly causal variant has median R² 0.206 on 12 sessions** with a
+  prior donor. The leave-one-session-out value 0.176 uses 15 sessions, so these
+  two medians do not establish that excluding later donors improves accuracy
+  on a matched sample.
+- **The blend is worse than the trailing-volatility endpoint**, median R² 0.044
   against 0.120 for pure trailing σ, and the reason is visible in α: it comes
   out at a mean of **0.721** (range 0.430 to 0.970), leaning heavily on daily σ.
   Fitting α in sample picks too much daily σ because *in the training window the
@@ -204,9 +243,9 @@ they came from, and puts them in context:
 
 | | MSFT | INTC | AAPL |
 |---|---|---|---|
-| contemporaneous OOS R², range | 0.198 to 0.437 | 0.364 to 0.542 | 0.309 to 0.437 |
+| contemporaneous selected-validation R², range | 0.198 to 0.437 | 0.364 to 0.542 | 0.309 to 0.437 |
 | mean, bootstrap band by symbol-day | 0.293 [0.212, 0.375] | 0.437 [0.387, 0.495] | 0.371 [0.327, 0.415] |
-| predictive OOS R², range | −0.0010 to 0.0045 | −0.0004 to 0.0046 | −0.0002 to 0.0056 |
+| predictive selected-validation R², range | −0.0010 to 0.0045 | −0.0004 to 0.0046 | −0.0002 to 0.0056 |
 | mean, bootstrap band | 0.0016 [−0.0005, 0.0037] | 0.0020 [0.0006, 0.0035] | 0.0016 [0.0003, 0.0036] |
 | metaorder exponent, range | 0.318 to 0.398 | 0.209 to 0.467 | 0.286 to 0.487 |
 | mean, bootstrap band | 0.351 [0.327, 0.376] | 0.335 [0.264, 0.409] | 0.357 [0.299, 0.432] |
@@ -214,11 +253,11 @@ they came from, and puts them in context:
 - The **explanatory-versus-predictive gap holds on 15 of 15 sessions** (the
   contemporaneous R² is at least ten times the absolute predictive one every
   time). This is the finding that survives the panel.
-- Predictive OOS R² is **positive on 11 of 15**; on the other four the best
+- Predictive selected-validation R² is **positive on 11 of 15**; on the other four the best
   lagged model is worse than predicting the mean.
 - Adding lagged history to the contemporaneous model buys a median +0.0031 and
-  at most +0.0154. At one-second resolution the relaxation has essentially
-  finished inside the first bucket.
+  at most +0.0154. This measures marginal return predictability. It does not identify a
+  price-level relaxation horizon.
 - The metaorder exponent is **below 0.5 on 15 of 15**, mean 0.348, bootstrap
   band by symbol-day [0.314, 0.382]. The single-session 0.370 was not unusual;
   what it lacked was the range around it.
@@ -364,7 +403,8 @@ once, happens to agree with it.
 
 Walking a displayed book measures the **virtual instantaneous cost of consuming
 visible liquidity at an instant**: no hidden size, no queue refill, no adverse
-selection, no time dimension at all. It is a **lower bound** on realised impact.
+selection, no time dimension at all. It is **not a general bound** on realised impact: refill, hidden liquidity,
+price moves and the execution schedule can change cost in either direction.
 It is in its own section, away from the metaorder results, for that reason, and
 none of the exponents above is a measurement of any square-root law.
 
@@ -377,15 +417,17 @@ python scripts/run_bookwalk.py
 ## 3. Metaorders: where the square root starts, and a published comparison
 
 `metaorder_impact.py` measures impact against participation rate on proxy
-metaorders, maximal runs of same-signed fills, following
-[arXiv 2503.18199](https://arxiv.org/abs/2503.18199). Across the fifteen
+metaorders, maximal runs of same-signed fills.
+[arXiv 2503.18199](https://arxiv.org/abs/2503.18199) motivates research using
+public-flow proxies; these simple runs are not an implementation of that
+paper's full reconstruction algorithm. Across the fifteen
 sessions the fitted exponent is **0.209 to 0.487, mean 0.348, below 0.5 every
 time**.
 
 ### The crossover
 
 Bucci, Benzaquen, Lillo and Bouchaud
-([PRL 123, 106401, 2019](https://arxiv.org/abs/1901.05332)) argue the square-root
+([PRL 122, 108302, 2019](https://www.off-ladhyx.polytechnique.fr/people/benzaquen/publications/Bucci2018crossover.pdf)) argue the square-root
 law must break down at small participation, becoming linear below a crossover
 where the metaorder is comparable to the volume traded while the book relaxes.
 That would explain an exponent below 0.5 with nothing wrong. The competing
@@ -468,110 +510,63 @@ python scripts/run_crossover.py
 
 ---
 
-## 4. Scheduling: the optimal trajectory for the fitted kernel
+## 4. Scheduling: historical result withdrawn after the kernel audit
 
-With a linear propagator the expected cost of a schedule is `½ x' M x` with
-`M[s,t] = G(|t−s|)`, and Gatheral, Schied and Slynko
-([Mathematical Finance 22, 2012](https://doi.org/10.1111/j.1467-9965.2011.00478.x))
-give the minimiser in closed form: `x* = S M⁻¹1 / (1'M⁻¹1)`. Obizhaeva and Wang
-([JFM 16, 2013](https://doi.org/10.1016/j.finmar.2012.09.001)) is the
-exponential-kernel special case, whose solution is the familiar bucket: a block
-at each end, a constant rate between.
+**Scope: fifteen symbol-days, 1,800 historical model replays over 600-second
+windows. These are archived outputs, not validated execution costs.**
+[The retained source tables](reports/schedule/saving_vs_twap.csv) record what
+was previously reported; they are not silently overwritten by a different model.
 
-`execution.py` refits the kernel with **delta fixed at 1**, because the GSS
-solution needs impact linear in size and deriving a schedule from a linear theory
-while pricing it with a concave kernel would be an inconsistency dressed as a
-result. Schedules are replayed over 600-second windows at 40 start times inside
-each session's held-out 30%, at 0.5%, 1% and 2% of session volume, for 1,800
-replays in all.
-
-**The circularity, stated plainly: the propagator prices the impact of the
-schedule it chose.** There is no counterfactual price path for an order that was
-never sent. That is exactly why the comparison runs against held-out bars, and
-why the number below is a saving under a model, not money.
-
-Cost per share splits into two parts, and reporting only the total would be
-reporting luck:
-
-| | TWAP | propagator-optimal | Almgren-Chriss (κ=0.005) |
+| historical output, 1% order | TWAP | old propagator schedule | Almgren-Chriss |
 |---|---:|---:|---:|
-| **impact** cost per share, 1% order | $0.002463 | $0.002463 | $0.003824 |
-| saving vs TWAP, as a fraction of TWAP's impact cost | n/a | **−0.000%** [−0.000%, −0.000%] | **−55.2%** [−78.2%, −32.3%] |
-| **drift** cost per share | −$0.007654 | −$0.007655 | −$0.005648 |
-| remaining-inventory variance, relative to TWAP | 1.000 | 1.000 | **0.486** |
+| model impact cost per share | $0.002463 | $0.002463 | $0.003824 |
+| reported relative saving | n/a | -0.000% | -55.2% |
+| remaining-inventory variance / TWAP | 1.000 | 1.000 | 0.486 |
 
-- **The propagator-optimal schedule is TWAP.** Not approximately: the fitted
-  linear kernel selects L = 1 on 9 of 15 sessions and never more than 5, and
-  `G(1)/G(0)` runs between −0.11 and +0.11. A kernel that memoryless makes `M`
-  nearly a multiple of the identity, whose constrained minimiser is the flat
-  schedule. The realised difference is at the 1e-9 dollar level and is very
-  slightly *negative*, because the optimum minimises the model's quadratic while
-  the replay weights by realised prices. There is nothing here to win.
-- **Almgren-Chriss buys risk with cost, and the exchange rate is measurable.**
-  Front-loading costs 55% more impact and halves remaining-inventory variance.
-  That is the textbook tradeoff with both sides in units, on held-out data.
-- **Drift dominates.** The realised move between arrival and fill is three times
-  the impact cost and is not controlled by any schedule; on the total-cost line
-  the Almgren-Chriss band spans zero. Comparing schedules on total cost is
-  comparing which one got luckier.
-- **No fitted kernel was indefinite** on any of the 15 sessions: the smallest
-  eigenvalue of `M` was positive every time, so none of these kernels admits a
-  round trip with negative expected cost. The check is in
-  `reports/schedule/kernel_diagnostics.csv` rather than assumed.
+The earlier inference was that an almost instantaneous fitted kernel made
+TWAP optimal and front-loading cost 55% more. **That inference is withdrawn.**
+`execution.fit_linear_kernel` fits returns, but the runner treated those
+coefficients as surviving level impact. Its quadratic objective used half of
+instantaneous impact while its exponential replay charged all of it, and a
+600-second schedule used zero-padded coefficients fitted over at most 60 seconds.
+Those are different cost models even before empirical uncertainty is considered.
 
-### The kernel at 100 ms
+The closed-form level-kernel results of
+[Gatheral, Schied and Slynko (2012)](https://onlinelibrary.wiley.com/doi/full/10.1111/j.1467-9965.2011.00478.x)
+and [Obizhaeva and Wang (2013)](https://web.mit.edu/wangj/www/pap/ObizhaevaWang13.pdf)
+remain useful mathematical controls. The tested algebraic helpers are retained
+for typed level responses. Raw return coefficients are rejected until
+explicitly accumulated, beyond-fit tails require a declared policy, and replay
+uses the exact quadratic impact objective optimized by the solver. The
+empirical runner still fails before fitting or writing outputs because these
+algebra repairs do not justify a causal level-impact model. Neither a better
+execution schedule nor the claimed absence of exploitable memory has been
+established on this sample.
 
-The obvious objection to "the optimal schedule is TWAP" is that one second is
-too coarse to resolve the relaxation, since the propagator literature usually
-works in trade or event time. `scripts/build_1s_bars.py --bin-ms 100` rebuilds
-the panel at 100 ms from the same local MBO extracts, and the propagator is
-refitted with the same 70/30 split and the same `(delta, L)` selection rule.
+### The 100 ms evidence, with the estimand corrected
 
-The test has two criteria, and on this data **they disagree**, so both are
-reported rather than collapsed into one verdict.
+The committed shape table contains means of normalized **return** coefficients
+b(l), fitted on 100 ms bars. The preceding section's diagnostic accumulates them
+into normalized level response R(l). The old and corrected interpretations are:
 
-| criterion | result | met? |
+| existing observation | earlier inference | corrected inference |
 |---|---|---|
-| selected L above 1 on most sessions | 12 of 15, median selected L = 20 | yes |
-| `G(1)/G(0)` clearly nonzero | mean **+0.0020**, band **[−0.0169, +0.0310]** | **no**, the band contains zero |
+| b(1)/b(0) = +0.0020, marginal interval includes zero | relaxation complete within 100 ms | R(1)/R(0) = 1.0020; no evidence of complete level relaxation |
+| negative average return coefficients after lag 1 | reversion distinct from impact decay | negative increments are compatible with a declining positive level response |
+| selected L above 1 on 12 of 15 sessions | a test of execution memory | selected-validation return fit only |
 
-![Kernel shape at 100 ms](figs/kernel_100ms.png)
+The old 100 ms [coefficient table](reports/kernel_100ms/kernel_shape.csv) and
+[selection table](reports/kernel_100ms/per_session.csv) are retained. The old
+`verdict.csv` is a historical interpretation and is withdrawn. The per-lag bands
+are marginal and were not corrected for searching across lags; they do not
+establish a joint significance claim. Hyperparameters were selected on the same
+tail whose R2 was reported. No new model is fitted to that already examined tail.
 
-Kernel shape, refitted at a fixed L = 20 with each session's own selected delta
-so the fifteen shapes are the same length and can be averaged, mean over 15
-symbol-days with a bootstrap band by symbol-day:
-
-| lag (100 ms bins) | 1 | 2 | 3 | 5 | 9 | 11 | 15 | 20 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| G(l)/G(0) | +0.0020 | −0.0053 | −0.0066 | −0.0017 | −0.0058 | −0.0063 | −0.0026 | −0.0066 |
-| band low | −0.0169 | −0.0098 | −0.0112 | −0.0049 | −0.0081 | −0.0086 | −0.0061 | −0.0127 |
-| band high | +0.0310 | −0.0013 | −0.0015 | +0.0017 | −0.0033 | −0.0038 | +0.0021 | −0.0028 |
-
-**Verdict: the decay is not visible at 100 ms. Relaxation on these three names
-is complete within 100 ms at this resolution**, the first lag carries nothing
-distinguishable from zero, and the scheduling result of section 4 stands: there
-is no kernel memory for a schedule to exploit. Finer bars were the strongest
-available objection to that result and they do not rescue it.
-
-What is there instead is not decay. **15 of the 19 lags from 2 to 20 have bands
-excluding zero, and all 15 are negative**, averaging **−0.0049 of G(0)**. A
-transient-impact kernel decays from positive toward zero; this one crosses
-straight through to a small persistent negative tail, which is price reverting
-after flow rather than impact relaxing. That tail is what the selected L is
-picking up, and it buys a median **+0.00170** of out-of-sample R². Explanatory
-R² at 100 ms is 0.180 to 0.501, in the same range as at one second.
-
-**What finer resolution costs.** Building 100 ms bars for all fifteen sessions
-from the local MBO extracts took **613 seconds of wall clock** and produced
-**57 MB** on disk, against 28 MB for everything currently committed. That is
-past what belongs in a repository, so the series is gitignored and DATA.md
-carries the one command that rebuilds it. The fitted kernels are committed
-instead, in `reports/kernel_100ms/`.
-
-```bash
-python scripts/build_all_sessions.py --bin-ms 100 --out-dir data/bars_100ms
-python scripts/run_kernel_100ms.py
-```
+**What did not work:** neither finer return bars nor the old cost replay
+established that impact disappears within 100 ms. A cumulative point estimate
+at two seconds is recoverable; its joint uncertainty, causal interpretation and
+extension to a ten-minute execution horizon are not recoverable from these
+committed summaries alone.
 
 ---
 
@@ -611,8 +606,8 @@ Mean across the 15 symbol-days, bootstrap band by symbol-day, best-level OFI:
 
 - **Contemporaneously, OFI subsumes trade flow.** It adds +0.159 given signed
   trade volume; trade volume adds +0.024 given OFI, and that interval contains
-  zero. This reproduces Cont, Cucuringu and Zhang on three names they did not
-  study. The integrated multi-level variable is better still, reaching 0.64 on
+  zero. This is consistent with Cont, Cucuringu and Zhang on this limited
+  three-name sample; it does not establish a new-name replication. The integrated multi-level variable is better still, reaching 0.64 on
   MSFT 2024-06-03 against 0.23 for trade flow.
 - **Predictively, neither says anything.** Both mean R²s are within a thousandth
   of zero and the incremental contribution of OFI given trade flow is 0.0000
@@ -634,17 +629,22 @@ and its scope is stated before any number: **S&P 500 members on 2024-06-28,
 Nasdaq venue only, 2024-04-01 to 2024-09-30, built from trades rather than the
 book.** What that is not, said plainly:
 
-- **Single venue.** Every volume here is Nasdaq volume, roughly a third of
-  consolidated volume for these names. Participation rates are shares of Nasdaq
-  volume, not of the tape.
+- **Single-venue baseline.** Every baseline volume here is Nasdaq volume.
+  Participation rates are shares of Nasdaq volume, not of the tape. The paired
+  consolidated sensitivity below finds a 7.60 median ratio across name medians,
+  not the earlier rough one-third description.
 - **Large caps only.** S&P 500 members. Nothing here speaks to small caps, and
   the sampler could not have drawn one.
-- **One half-year, ordinary days.** No CPI print, no FOMC, no crisis.
+- **One half-year, without event stratification.** The window includes scheduled
+  CPI releases and FOMC decisions. It is not an ordinary-day-only sample and no
+  separate event-day or regime result is claimed.
 - **Proxy metaorders, not institutional orders.** Runs of one-sided pressure in
   thirty-second bins, which merge concurrent participants and split a single
   participant who pauses. Nobody's parent order is observed.
-- **Venue volume, not consolidated.** The pending CRSP row below would be the
-  consolidated check and it is not done.
+- **Venue baseline plus a consolidated sensitivity.** The original fits use
+  Nasdaq venue volume. The completed paired check below changes only volume
+  first, then changes trailing volatility separately, without changing the
+  proxy-order sample.
 - **The published estimates rest on far more.** arXiv 2606.24019 uses 178
   trading days on one name; the wider literature uses years of data across many
   more names and, crucially, on REAL metaorders from brokers who know which
@@ -786,11 +786,13 @@ least, should have the HIGHER exponent. It has the lower one, 0.274 against
 
 Section 3 found the linear-to-square-root crossover interior at 2.8e-4 of daily
 volume on the three-name panel, with impact there of 8.2 ticks. Per stock here,
-q\* is **interior on only 21 of 108 names**, but where it can be located the
-impact at the crossover is **a median 2.65 ticks and above one tick on 94 of
-108**. So the crossover, where it is identified at all, sits above the
-discreteness floor rather than inside it, which is the same conclusion section 3
-reached and is now reached on a hundred names instead of three.
+q\* is **interior on only 21 of 108 names**. On those 21, crossover impact is
+**a median 2.59 ticks and above one tick on 19 of 21**. The previous 2.65-tick
+median and 94/108 count included fits at the search boundary, so they did not
+support an inference conditional on an identified crossover. Both denominators
+are retained in [the audit table](reports/kernel_audit/crossover_scope.csv).
+The identified subset usually lies above one tick; most names do not identify
+an interior crossover on this search grid.
 
 ### Beside the three-name study, and beside the published result
 
@@ -823,16 +825,41 @@ difference is, it is not AAPL-specific. Their bias-corrected c_eff of 0.34 is
 **not recomputed here**: the abstract states it without stating the correction,
 and inventing one that lands on 0.34 would be fitting to the answer.
 
-### Pending: the consolidated normaliser
+### Consolidated normaliser, paired on the same proxy orders
 
-Every V_D and sigma_D above is single-venue Nasdaq, which is the same feed the
-published study used, so that comparison is like for like. A second normaliser
-using consolidated CRSP daily volume and trailing 20-day close-to-close
-volatility would change the LEVEL of c and not the exponent.
-`cross_section.consolidated_normalisers` is a stub that **raises** rather than
-falling back, because a silent fallback would let a consolidated claim be made
-from single-venue data. WRDS was refusing logins from this machine when this
-branch was built and no result in this section depends on it.
+The original V_D and sigma_D use the Nasdaq venue feed, matching the published
+study's venue convention. One approved WRDS session resolved all 108 frozen
+sample names through `crsp.dsenames` and cached CIZ daily rows from
+`crsp.dsf_v2`. The comparison contains 1,017,071 identical proxy orders over
+13,612 symbol-dates, with no missing order or session normalisers.
+
+| normaliser | pooled delta | pooled c, delta fixed at 1/2 |
+|---|---:|---:|
+| Nasdaq volume, Nasdaq volatility | 0.3095 | 1.068 |
+| **consolidated volume, Nasdaq volatility** | **0.2941** | **2.682** |
+| Nasdaq volume, consolidated trailing volatility | 0.3083 | 0.923 |
+| consolidated volume, consolidated trailing volatility | 0.3020 | 2.331 |
+
+Sources: `reports/cross_section/normaliser_comparison_summary.csv` and
+`reports/cross_section/normaliser_coverage.csv`. The baseline reproduces the
+existing pooled point estimates before any substitution. Changing volume alone
+reduces delta by 0.0154 and raises c by 1.614. Changing volatility alone reduces
+delta by only 0.0012 and lowers c by 0.145. These are deterministic paired
+refits, not new significance tests.
+
+The earlier description of Nasdaq volume as roughly one third of consolidated
+volume was wrong for this six-month sample. Across the 108 names, the median
+of each name's median consolidated-to-Nasdaq ratio is 7.60; the 5th to 95th
+percentile range across those name medians is 4.05 to 9.99. The source-unit
+check is independent: CRSP volume matches cached `EQUS.SUMMARY` consolidated
+volume at a 1.000 median ratio over 7,040 overlaps. See
+`reports/cross_section/volume_source_summary.csv` and
+`reports/cross_section/consolidated_source_validation.csv`.
+
+Licensed rows stay outside the repository. Offline reproduction sets
+`IMPACT_CRSP_CACHE_DIR`; the loader verifies hashes, identifiers, units, dates
+and exact proxy-order coverage. Any missing consolidated observation raises,
+and venue volume is never substituted.
 
 ```bash
 export SP500_MEMBERSHIP_PARQUET=~/path/to/sp500_membership_daily.parquet
@@ -841,6 +868,8 @@ python scripts/fetch_cross_section_trades.py --confirm
 python scripts/validate_trade_bars.py --symbol AAPL
 python scripts/build_cross_section_metaorders.py
 python scripts/run_cross_section.py
+python scripts/run_normaliser_comparison.py
+python scripts/summarize_normaliser_comparison.py --check
 ```
 
 ---
@@ -852,13 +881,13 @@ python scripts/run_cross_section.py
 | `bookwalk.py` | displayed-ladder cost, five candidate forms, WNLS with robust errors, LOSO CV, block bootstrap, likelihood profile |
 | `conditional_impact.py` | predicted versus realised impact of a given order, out of sample |
 | `crossover.py` | two-regime fit with the crossover by profile likelihood, plus the published recipe |
-| `execution.py` | GSS optimal schedule for the fitted kernel, replayed on held-out bars |
+| `execution.py` | typed level-response execution algebra; empirical schedule publication remains withdrawn |
 | `orderflow.py` | multi-level OFI (vendored, attributed) beside trade flow |
 | `propagator.py` | the transient-impact kernel |
 | `metaorder_impact.py` | impact against participation on reconstructed metaorders |
 | `impact_model.py` | the original piecewise model and the Almgren-Chriss allocator |
 | `panel.py` | one loader for the fifteen sessions |
-| `cross_section.py` | stratified sampling, trades to bars, and the robust cross-sectional regression |
+| `cross_section.py` | stratified sampling, consolidated normalisers, and the robust cross-sectional regression |
 | `scripts/build_*.py` | raw vendor data to committed derived series; `build_1s_bars.py --bin-ms` for sub-second grids |
 | `scripts/run_*.py` | derived series to the tables above |
 | `data/`, `reports/` | derived aggregates and results; see `DATA.md` |

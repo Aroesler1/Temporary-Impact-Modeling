@@ -238,20 +238,11 @@ def ols_robust(y: np.ndarray, X: pd.DataFrame) -> OLSResult:
 
 
 def consolidated_normalisers(symbols, start: str, end: str) -> pd.DataFrame:
-    """CRSP consolidated volume and trailing close-to-close volatility.
+    """Load verified CRSP consolidated volume and trailing volatility offline.
 
-    NOT IMPLEMENTED, and deliberately a raising stub rather than a silent
-    fallback. Every V_D and sigma_D in this study is single-venue Nasdaq, which
-    is the same feed arXiv 2606.24019 used, so the comparison with the published
-    prefactor is like for like. The consolidated variant is a SECOND normaliser
-    that would change the level of c and not the exponent, and it is left as a
-    pending row in the README.
-
-    WRDS was refusing logins from this machine when the cross-section was built,
-    so nothing here depends on it. When WRDS is reachable this should query CRSP
-    daily stock file volume and returns for the same symbols and window.
+    Missing cache, identifiers, units, or requested coverage raises. Venue
+    volume is never substituted for a missing consolidated observation.
     """
-    raise NotImplementedError(
-        "the consolidated CRSP normaliser is a pending row. WRDS was "
-        "unreachable when this branch was built and no result in the "
-        "cross-section depends on it. See the pending row in README.md.")
+    from crsp import load_consolidated_cache
+
+    return load_consolidated_cache(symbols, start, end)

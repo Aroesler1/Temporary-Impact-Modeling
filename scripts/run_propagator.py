@@ -35,14 +35,14 @@ def main() -> int:
     print("EXPLANATORY  (contemporaneous flow included)")
     print(explanatory.grid.head(5).to_string(index=False, float_format=lambda v: f"{v:0.5f}"))
     print(f"\n  best: delta={explanatory.best.delta}  lags={explanatory.best.n_lags}"
-          f"  OOS R2={explanatory.best.r2_out:.5f}")
-    print(f"  memoryless (L=0, same delta) OOS R2={explanatory.memoryless.r2_out:.5f}")
+          f"  selected-validation R2={explanatory.best.r2_out:.5f}")
+    print(f"  memoryless (L=0, same delta) selected-validation R2={explanatory.memoryless.r2_out:.5f}")
     print(f"  gain from lagged history: {explanatory.history_gain:+.5f}")
 
     print("\nPREDICTIVE  (lags >= 1 only)")
     print(predictive.grid.head(5).to_string(index=False, float_format=lambda v: f"{v:0.5f}"))
     print(f"\n  best: delta={predictive.best.delta}  lags={predictive.best.n_lags}"
-          f"  OOS R2={predictive.best.r2_out:.5f}")
+          f"  selected-validation R2={predictive.best.r2_out:.5f}")
 
     ratio = (explanatory.best.r2_out / predictive.best.r2_out
              if predictive.best.r2_out > 0 else float("inf"))
