@@ -92,7 +92,7 @@ is the corresponding level response.
 
 ### The headline: conditional impact accuracy
 
-The table below is the corrected `outcome-end-v2` reproduction. Every
+The table below is the corrected `outcome-end-v3` reproduction. Every
 reconstructed metaorder starting inside the held-out last 30% of a session gets
 a predicted impact from a kernel fitted strictly inside the first 70%, using
 only that order's own flow. R² is of realised on predicted with **no refit**:
@@ -112,10 +112,14 @@ Corrected reports, split diagnostics, and committed-input hashes are in
 in `reports/conditional_impact/` as historical evidence. Rebuild and compare
 the corrected files with
 `python scripts/run_conditional_impact.py --check`.
-The exclusions do not change any headline above at the displayed precision;
+The exclusions do not change the four headline rows above at their displayed precision;
 across all eight models, the largest absolute change in median R² is 0.00033.
 That stability is a corrected reproduction result, not an assumption that the
-old files survived the cutoff repair.
+old files survived the cutoff repair. Version 3 also fixes numerical tie handling
+in calibration bins: integer midpoint ranks keep 12-significant-digit ties
+together, without rounding scored predictions. Counts and input hashes must
+match exactly; fitted floats use the tolerances recorded in `methodology.csv`.
+The tables below are regenerated from these corrected outputs.
 
 Four things fall out of that table.
 
@@ -128,7 +132,7 @@ Four things fall out of that table.
 2. **The kernel's shape is worth something once the level is fixed.** Give the
    propagator a single scale fitted on training metaorders, the same one
    parameter the square-root model gets, and it beats the square-root model on
-   **13 of 15 sessions**, with a pooled calibration ratio between 0.75 and 1.02
+   **13 of 15 sessions**, with a pooled calibration ratio between 0.77 and 1.01
    across the middle eight deciles.
 3. **The standard square-root model is about 2x miscalibrated intraday**, and the
    direction is systematic: slope 0.52, so a coefficient fitted on the morning
@@ -149,15 +153,15 @@ Pooled calibration by predicted-impact decile, propagator with a fitted level:
 
 | decile | predicted | realised | ratio | n |
 |---:|---:|---:|---:|---:|
-| 0 | 0.000019 | 0.000014 | 0.75 | 5,266 |
-| 2 | 0.000038 | 0.000030 | 0.79 | 4,746 |
-| 4 | 0.000053 | 0.000047 | 0.87 | 4,772 |
-| 6 | 0.000080 | 0.000082 | 1.02 | 4,681 |
-| 8 | 0.000185 | 0.000150 | 0.81 | 4,741 |
-| 9 | 0.000405 | 0.000249 | 0.61 | 4,759 |
+| 0 | 0.000017 | 0.000014 | 0.82 | 4,711 |
+| 2 | 0.000037 | 0.000028 | 0.77 | 5,348 |
+| 4 | 0.000053 | 0.000046 | 0.87 | 4,846 |
+| 6 | 0.000080 | 0.000081 | 1.01 | 4,770 |
+| 8 | 0.000185 | 0.000150 | 0.81 | 4,753 |
+| 9 | 0.000405 | 0.000249 | 0.61 | 4,752 |
 
 The top decile is where it fails, and that is the decile a desk cares about: the
-largest orders are over-predicted by 39%. Corrected full tables are in
+largest orders realise 39% less impact than predicted. Corrected full tables are in
 `reports/conditional_impact_corrected/`.
 
 ### Which volatility belongs in the square-root model
@@ -181,22 +185,22 @@ unscored.
 
 | model | sessions | median OOS R² | mean R², band by symbol-day | median slope | top-decile ratio |
 |---|---:|---:|---|---:|---:|
-| propagator | 15 | −2.035 | [−14.32, −3.00] | 0.334 | 0.289 |
-| propagator, rescaled | 15 | −0.017 | [−0.387, 0.088] | 0.524 | 0.615 |
-| square root, σ_D | 15 | −0.327 | [−0.467, −0.081] | 0.520 | 0.638 |
-| square root, σ trailing 30 min | 15 | 0.120 | [0.069, 0.161] | 1.234 | 1.387 |
-| **square root, geometric blend** | 15 | **0.044** | [−0.103, 0.141] | 0.615 | 0.709 |
-| **square root, time-of-day (loso)** | 15 | **0.176** | [0.160, 0.238] | 0.834 | **1.011** |
-| **square root, time-of-day (prior only)** | 12 | **0.206** | [0.160, 0.255] | 0.955 | 1.096 |
-| square root, rate term | 15 | −0.257 | [−0.332, −0.009] | 0.570 | 0.669 |
+| propagator | 15 | -2.035 | [-14.319, -3.000] | 0.334 | 0.289 |
+| propagator, rescaled | 15 | -0.017 | [-0.391, 0.088] | 0.524 | 0.615 |
+| square root, σ_D | 15 | -0.327 | [-0.466, -0.081] | 0.519 | 0.636 |
+| square root, σ trailing 30 min | 15 | 0.120 | [0.069, 0.161] | 1.234 | 1.386 |
+| **square root, geometric blend** | 15 | 0.044 | [-0.099, 0.142] | 0.615 | 0.710 |
+| **square root, time-of-day (loso)** | 15 | 0.176 | [0.160, 0.238] | 0.834 | 1.011 |
+| **square root, time-of-day (prior only)** | 12 | 0.206 | [0.160, 0.255] | 0.955 | 1.097 |
+| square root, rate term | 15 | -0.257 | [-0.331, -0.008] | 0.569 | 0.669 |
 
 **The time-of-day profile wins, and the blend loses to the row it was built
 from.** Three things to read off it.
 
 - **The top decile is no longer over-predicted.** The plain square-root model
-  over-predicts the largest orders by 57% (ratio 0.638); the time-of-day model
-  lands at **1.011** on the leave-one-session-out variant and 1.096 on the
-  strictly causal one, so it is calibrated to within 1% and 10% respectively
+  over-predicts the largest orders by 57% (ratio 0.636); the time-of-day model
+  lands at **1.011** on the leave-one-session-out variant and 1.097 on the
+  strictly causal one, so its calibration ratios are about 1% and 10% from one
   where a desk actually cares. Neither is a tuned result: the multiplier is a
   shape borrowed from other days and nothing in it was fitted to the top decile.
 - **The strictly causal variant has median R² 0.206 on 12 sessions** with a
@@ -205,7 +209,7 @@ from.** Three things to read off it.
   on a matched sample.
 - **The blend is worse than the trailing-volatility endpoint**, median R² 0.044
   against 0.120 for pure trailing σ, and the reason is visible in α: it comes
-  out at a mean of **0.721** (range 0.430 to 0.970), leaning heavily on daily σ.
+  out at a mean of **0.720** (range 0.430 to 0.970), leaning heavily on daily σ.
   Fitting α in sample picks too much daily σ because *in the training window the
   daily constant is not yet wrong*. The error it is meant to correct only appears
   in the window it is not fitted on. This is a clean example of an in-sample
@@ -234,12 +238,12 @@ nothing else.
 | distinguishable from zero | **yes**, the band excludes it |
 | sign | **positive** on 14 of 15 sessions |
 | median OOS R² | −0.257, against −0.327 without the term |
-| top-decile ratio | 0.669, against 0.638 without the term |
+| top-decile ratio | 0.669, against 0.636 without the term |
 
 **The rate term is real, correctly signed, and too small to matter.** Positive k
 means impact rises with the rate of execution, which is the direction Zarinelli
 and co-authors report, and the band excludes zero comfortably. But it moves the
-median R² from −0.327 to −0.257 and the top-decile calibration ratio from 0.638
+median R² from −0.327 to −0.257 and the top-decile calibration ratio from 0.636
 to 0.669, against 1.011 for simply putting the right volatility in. For
 reference the rescaled propagator's top decile sits at 0.615. **On this data the
 level of σ is worth an order of magnitude more than the rate of execution**, and

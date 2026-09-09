@@ -1,2 +1,2 @@
-report_version,train_rule,test_rule,crossing_rule,train_fraction,n_sessions,n_crossing_orders_excluded
-outcome-end-v2,t_start < split_second and t_end < split_second,t_start >= split_second,excluded from both train and test,0.7,15,8
+report_version,decile_policy,float_check_rtol,float_check_atol,train_rule,test_rule,crossing_rule,train_fraction,n_sessions,n_crossing_orders_excluded
+outcome-end-v3,"12-significant-digit ties, integer midpoint ranks",1e-08,1e-10,t_start < split_second and t_end < split_second,t_start >= split_second,excluded from both train and test,0.7,15,8

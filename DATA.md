@@ -306,11 +306,18 @@ gitignored.
 
 `reports/conditional_impact/` preserves the historical pre-cutoff-repair
 tables. `reports/conditional_impact_corrected/` is rebuilt from the committed
-one-second bars and aggregate metaorders with `outcome-end-v2`: training orders
+one-second bars and aggregate metaorders with `outcome-end-v3`: training orders
 must finish before the split, and the eight crossing orders are excluded from
 both sides. Its input manifest hashes all 32 committed inputs. No vendor client
 or external cache is used. Verify it with
 `python scripts/run_conditional_impact.py --check`.
+
+Version 3 uses analytic derivatives for the rate fit and deterministic integer
+midpoint ranks for calibration bins. Twelve significant digits define ties
+only; prediction means and scores retain full precision. Verification requires
+exact counts, labels, hashes, missingness and row order, while floating values
+allow relative error `1e-8` and absolute error `1e-10`. These bounds accommodate
+numerical library differences and are below published headline precision.
 
 ## Audit derived from existing committed tables, 2026-09-06
 

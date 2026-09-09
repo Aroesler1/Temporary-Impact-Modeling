@@ -41,6 +41,30 @@ ARTIFACTS = (
     "methodology.csv",
 )
 
+# Fitted floats are mathematical results, not a portable byte serialization.
+# These bounds are far below the precision of published claims. Counts,
+# labels, input hashes, missingness and row order remain exact.
+FLOAT_RTOL = 1e-8
+FLOAT_ATOL = 1e-10
+
+
+def verify_artifacts(expected_dir: Path, rebuilt_dir: Path) -> None:
+    for name in ARTIFACTS:
+        stored = pd.read_csv(expected_dir / name)
+        rebuilt = pd.read_csv(rebuilt_dir / name)
+        pd.testing.assert_index_equal(stored.columns, rebuilt.columns)
+        if stored.shape != rebuilt.shape:
+            raise ValueError(f"{name}: artifact shape differs")
+        for column in stored:
+            left, right = stored[column], rebuilt[column]
+            floating = (pd.api.types.is_float_dtype(left.dtype)
+                        and pd.api.types.is_float_dtype(right.dtype))
+            pd.testing.assert_series_equal(
+                left, right, check_exact=not floating,
+                rtol=FLOAT_RTOL, atol=FLOAT_ATOL,
+                obj=f"{name}/{column}",
+            )
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -246,7 +270,10 @@ def build(out_dir: Path) -> None:
     pd.DataFrame(
         [
             {
-                "report_version": "outcome-end-v2",
+                "report_version": "outcome-end-v3",
+                "decile_policy": "12-significant-digit ties, integer midpoint ranks",
+                "float_check_rtol": FLOAT_RTOL,
+                "float_check_atol": FLOAT_ATOL,
                 "train_rule": "t_start < split_second and t_end < split_second",
                 "test_rule": "t_start >= split_second",
                 "crossing_rule": "excluded from both train and test",
@@ -281,14 +308,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="impact-conditional-check-") as raw:
         rebuilt = Path(raw)
         build(rebuilt)
-        stale = [
-            name
-            for name in ARTIFACTS
-            if not (args.out_dir / name).exists()
-            or (args.out_dir / name).read_bytes() != (rebuilt / name).read_bytes()
-        ]
-    if stale:
-        raise SystemExit(f"stale corrected conditional reports: {', '.join(stale)}")
+        verify_artifacts(args.out_dir, rebuilt)
     print(f"Verified {len(ARTIFACTS)} corrected conditional-impact artifacts.")
     return 0
 

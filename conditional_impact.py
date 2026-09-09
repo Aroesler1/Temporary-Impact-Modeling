@@ -366,7 +366,13 @@ def fit_rate_model(orders: pd.DataFrame, session_volume: float, sigma_d: float,
         c, delta, k = theta
         return y - c * q ** delta * (1.0 + k * lr)
 
-    res = least_squares(residual, x0=[1.0, 0.5, 0.0],
+    def jacobian(theta):
+        c, delta, k = theta
+        power = q ** delta
+        basis = power * (1.0 + k * lr)
+        return -np.column_stack((basis, c * basis * np.log(q), c * power * lr))
+
+    res = least_squares(residual, jac=jacobian, x0=[1.0, 0.5, 0.0],
                         bounds=([0.0, 0.0, -k_bound], [np.inf, 3.0, k_bound]),
                         xtol=1e-14, ftol=1e-14, max_nfev=20000)
     return RateFit(float(res.x[0]), float(res.x[1]), float(res.x[2]), int(len(y)))
@@ -406,6 +412,28 @@ def _scores(realised: np.ndarray, predicted: np.ndarray) -> dict[str, float]:
             "mean_realised": float(y.mean()), "mean_predicted": float(p.mean())}
 
 
+def calibration_deciles(predicted: np.ndarray, n_deciles: int = 10) -> np.ndarray:
+    """Assign whole numerical tie groups using their integer midpoint ranks.
+
+    Twelve significant decimal digits define sorting keys only. Means and
+    scores retain the original predictions. Integer rank arithmetic avoids
+    interpolated quantile edges moving one observation across a boundary.
+    """
+    values = np.asarray(predicted, dtype=float)
+    if values.ndim != 1 or not np.isfinite(values).all():
+        raise ValueError("decile predictions must be a finite vector")
+    if not isinstance(n_deciles, int) or isinstance(n_deciles, bool) or n_deciles < 1:
+        raise ValueError("n_deciles must be a positive integer")
+    if not len(values):
+        return np.array([], dtype=int)
+    # Formatting defines significant digits without a scale-dependent cutoff.
+    keys = np.array([float(format(value, ".12g")) for value in values])
+    _, inverse, counts = np.unique(keys, return_inverse=True, return_counts=True)
+    midpoint_twice = 2 * np.cumsum(counts) - counts
+    groups = midpoint_twice * n_deciles // (2 * len(values))
+    return groups[inverse]
+
+
 def calibration_table(realised: np.ndarray, predicted: np.ndarray,
                       n_deciles: int = 10) -> pd.DataFrame:
     """Mean realised against mean predicted, by predicted-impact decile.
@@ -416,8 +444,7 @@ def calibration_table(realised: np.ndarray, predicted: np.ndarray,
     """
     ok = np.isfinite(realised) & np.isfinite(predicted)
     frame = pd.DataFrame({"realised": realised[ok], "predicted": predicted[ok]})
-    frame["decile"] = pd.qcut(frame.predicted, n_deciles, labels=False,
-                              duplicates="drop")
+    frame["decile"] = calibration_deciles(frame.predicted.to_numpy(), n_deciles)
     table = frame.groupby("decile").agg(
         predicted=("predicted", "mean"),
         realised=("realised", "mean"),
