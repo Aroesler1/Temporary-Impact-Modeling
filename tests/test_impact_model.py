@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from impact_model import (  # noqa: E402
     allocate_schedule,
+    fit_intraday_liquidity_profile,
     first_nonzero_ask_depth,
     fit_power_law,
     schedule_cost,
@@ -177,3 +178,81 @@ def test_baselines_never_beat_risk_neutral_optimum():
     costs = table.set_index("schedule")["impact_cost"]
     assert costs["kkt_risk_neutral"] <= costs["TWAP"] + 1e-9
     assert costs["kkt_risk_neutral"] <= costs["depth_proportional"] + 1e-9
+
+
+# --------------------------------------------------------------------------
+# the penalized B-spline liquidity profile, ported from the notebook
+# --------------------------------------------------------------------------
+
+def _synthetic_session_depth(n_minutes=390, noise=15.0, seed=0):
+    """A smooth U-shaped intraday depth curve (heavy at the open and close,
+    thin at midday) plus i.i.d. noise, the standard shape depth and volume
+    both take across a session."""
+    rng = np.random.default_rng(seed)
+    minutes = np.arange(n_minutes, dtype=float)
+    true = 500.0 + 300.0 * np.exp(-minutes / 40.0) + \
+        200.0 * np.exp(-(n_minutes - 1 - minutes) / 40.0)
+    depth = true + rng.normal(0.0, noise, n_minutes)
+    return minutes, depth, true
+
+
+def test_fit_intraday_liquidity_profile_recovers_a_known_smooth_shape():
+    minutes, depth, true = _synthetic_session_depth()
+    fit = fit_intraday_liquidity_profile(minutes, depth)
+    assert fit.profile.shape == true.shape
+    # the smoothed curve should sit much closer to the noise-free truth than
+    # the raw noisy points do
+    raw_error = np.abs(depth - true).mean()
+    fit_error = np.abs(fit.profile - true).mean()
+    assert fit_error < 0.4 * raw_error
+
+
+def test_fit_intraday_liquidity_profile_smooths_rather_than_interpolates():
+    """Effective degrees of freedom well below the number of minutes is the
+    whole point of the roughness penalty; without it the fit would just
+    memorize the noisy minute averages."""
+    minutes, depth, _ = _synthetic_session_depth()
+    fit = fit_intraday_liquidity_profile(minutes, depth)
+    assert fit.edf < 0.5 * len(minutes)
+    assert fit.lam > 0.0
+
+
+def test_fit_intraday_liquidity_profile_is_almost_exact_on_noiseless_data():
+    minutes, _, true = _synthetic_session_depth(noise=0.0)
+    fit = fit_intraday_liquidity_profile(minutes, true)
+    # a 10-basis-function spline cannot represent this exponential curve
+    # exactly, but with no noise to smooth GCV should pick a tiny penalty and
+    # the residual basis-approximation error should be a small fraction of
+    # the curve's own scale (~800)
+    assert np.abs(fit.profile - true).max() < 2.0
+
+
+def test_fit_intraday_liquidity_profile_predict_matches_the_fitted_grid():
+    minutes, depth, _ = _synthetic_session_depth(seed=1)
+    fit = fit_intraday_liquidity_profile(minutes, depth)
+    np.testing.assert_allclose(fit.predict(fit.minutes), fit.profile, atol=1e-8)
+    # and it evaluates at off-grid points too, the notebook's Dt_hat(t)
+    dense = np.linspace(minutes.min(), minutes.max(), 5000)
+    dense_profile = fit.predict(dense)
+    assert dense_profile.shape == dense.shape
+    assert np.all(np.isfinite(dense_profile))
+
+
+def test_fit_intraday_liquidity_profile_averages_duplicate_minutes():
+    """`avg_dt` in the notebook is already a per-minute mean across symbols
+    and days; feeding this function raw (possibly repeated) minute labels
+    should collapse them the same way rather than double-weighting them."""
+    minutes, depth, true = _synthetic_session_depth(seed=2)
+    duplicated_minutes = np.concatenate([minutes, minutes])
+    duplicated_depth = np.concatenate([depth, depth + 1.0])
+    fit_dup = fit_intraday_liquidity_profile(duplicated_minutes, duplicated_depth)
+    fit_avg = fit_intraday_liquidity_profile(minutes, depth + 0.5)
+    np.testing.assert_allclose(fit_dup.profile, fit_avg.profile, atol=1e-8)
+
+
+def test_fit_intraday_liquidity_profile_rejects_too_few_distinct_minutes():
+    import pytest
+
+    with pytest.raises(ValueError):
+        fit_intraday_liquidity_profile(np.arange(5, dtype=float),
+                                       np.arange(5, dtype=float))

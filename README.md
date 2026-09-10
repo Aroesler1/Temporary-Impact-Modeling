@@ -644,10 +644,13 @@ and its scope is stated before any number: **S&P 500 members on 2024-06-28,
 Nasdaq venue only, 2024-04-01 to 2024-09-30, built from trades rather than the
 book.** What that is not, said plainly:
 
-- **Single-venue baseline.** Every baseline volume here is Nasdaq volume.
-  Participation rates are shares of Nasdaq volume, not of the tape. The paired
-  consolidated sensitivity below finds a 7.60 median ratio across name medians,
-  not the earlier rough one-third description.
+- **Single-venue baseline.** Every baseline volume here is Nasdaq volume,
+  RTH-CONTINUOUS (`[09:30:00, 16:00:00)`), matching what the proxy-metaorder
+  builder sums for V_D. Participation rates are shares of that RTH-continuous
+  Nasdaq volume, not of the tape. The paired consolidated sensitivity below
+  reports two ratios side by side, one per definition of Nasdaq volume; see
+  "Consolidated normaliser" for both and for why they land close together
+  pooled despite differing a lot for individual names.
 - **Large caps only.** S&P 500 members. Nothing here speaks to small caps, and
   the sampler could not have drawn one.
 - **One half-year, without event stratification.** The window includes scheduled
@@ -862,13 +865,55 @@ reduces delta by 0.0154 and raises c by 1.614. Changing volatility alone reduces
 delta by only 0.0012 and lowers c by 0.145. These are deterministic paired
 refits, not new significance tests.
 
+**Two definitions of "Nasdaq volume," not one.** V_D above is Nasdaq
+RTH-CONTINUOUS volume, `[09:30:00, 16:00:00)`, because that is exactly what
+`build_cross_section_metaorders.py` sums before a trade is ever binned, and
+`participation` is Q divided by that same session total; using a different
+V_D would make participation no longer match the volume the proxy-metaorder
+filters were applied against. RTH-continuous excludes the closing cross
+(printed AT `16:00:00.000000000`, and `< 16:00:00` drops it) and all
+pre-market and post-market activity. FULL-DAY sums every print with no
+time-of-day filter: both auction crosses, extended hours included. Across the
+108 names, the median of each name's median consolidated-to-Nasdaq ratio is
+**7.60** against RTH-continuous volume (5th to 95th percentile 4.05 to 9.99,
+as before) and **7.59** against full-day volume, quartiles [2.76, 8.81]
+against [4.61, 8.83] for the RTH-continuous figure. Both are in
+[`reports/cross_section/venue_definitions.csv`](reports/cross_section/venue_definitions.csv),
+built by `scripts/build_venue_definitions.py` straight from the raw trades
+files, independently of the metaorder pipeline.
+
 The earlier description of Nasdaq volume as roughly one third of consolidated
-volume was wrong for this six-month sample. Across the 108 names, the median
-of each name's median consolidated-to-Nasdaq ratio is 7.60; the 5th to 95th
-percentile range across those name medians is 4.05 to 9.99. The source-unit
-check is independent: CRSP volume matches cached `EQUS.SUMMARY` consolidated
-volume at a 1.000 median ratio over 7,040 overlaps. See
-`reports/cross_section/volume_source_summary.csv` and
+volume was itself a full-day, like-for-like comparison, and it was not wrong:
+7.60 does not correct it, because 7.60 and the one-third estimate answer
+different questions. Pooled, the like-for-like ratio (7.59) is barely
+different from the RTH-continuous one (7.60), so at the pooled median the
+RTH/full-day choice changes almost nothing. That pooled sameness hides a sharp
+split by name, though. `crsp_exchcd` in
+`reports/cross_section/venue_definitions.csv` (the same identifier field
+`crsp.load_consolidated_cache` verifies) explains nearly all of it: the 70
+sample names listed on NYSE (`exchcd 1`) have a full-day-to-RTH-continuous
+ratio of essentially 1.00 (range 1.00 to 1.02) because Nasdaq is not their
+primary market and does not run a comparable closing cross for them there; the
+38 Nasdaq-listed names (`exchcd 3`) have a median ratio of 1.65 (range 1.29 to
+2.12), because Nasdaq's own closing cross for its own listings prints as one
+large trade timestamped at or after the exact close, exactly what the
+RTH-continuous filter excludes. AAPL and KHC, both Nasdaq-listed, show it
+directly: AAPL's consolidated-to-Nasdaq ratio falls from 4.77
+(RTH-continuous) to 2.94 (full-day, like for like); KHC's falls from 4.92 to
+2.77. Both land close to the "roughly one third" figure the earlier
+description used.
+
+So the prefactor shift from 1.068 to 2.682 in the table above, which
+literally substitutes consolidated volume for this same RTH-continuous V_D,
+is **mostly venue share, not auctions**: the pooled ratio driving that
+substitution barely moves between the RTH-continuous and full-day
+definitions, because most of this stratified sample is not Nasdaq-listed and
+the auction/extended-hours gap the RTH-continuous filter creates on THIS
+venue does not apply to them. The gap is real and large for the Nasdaq-listed
+minority of names, but it nets out at the pooled median rather than driving
+the shift. The source-unit check is independent of both: CRSP volume matches
+cached `EQUS.SUMMARY` consolidated volume at a 1.000 median ratio over 7,040
+overlaps. See `reports/cross_section/volume_source_summary.csv` and
 `reports/cross_section/consolidated_source_validation.csv`.
 
 Licensed rows stay outside the repository. Offline reproduction sets
@@ -885,6 +930,7 @@ python scripts/build_cross_section_metaorders.py
 python scripts/run_cross_section.py
 python scripts/run_normaliser_comparison.py
 python scripts/summarize_normaliser_comparison.py --check
+python scripts/build_venue_definitions.py --crsp-cache "$IMPACT_CRSP_CACHE_DIR"
 ```
 
 ---
@@ -900,7 +946,7 @@ python scripts/summarize_normaliser_comparison.py --check
 | `orderflow.py` | multi-level OFI (vendored, attributed) beside trade flow |
 | `propagator.py` | the transient-impact kernel |
 | `metaorder_impact.py` | impact against participation on reconstructed metaorders |
-| `impact_model.py` | the original piecewise model and the Almgren-Chriss allocator |
+| `impact_model.py` | the original piecewise model, the Almgren-Chriss allocator, and a penalized-B-spline intraday liquidity profile (`fit_intraday_liquidity_profile`, ported from the notebook, scipy only) |
 | `panel.py` | one loader for the fifteen sessions |
 | `cross_section.py` | stratified sampling, consolidated normalisers, and the robust cross-sectional regression |
 | `scripts/build_*.py` | raw vendor data to committed derived series; `build_1s_bars.py --bin-ms` for sub-second grids |

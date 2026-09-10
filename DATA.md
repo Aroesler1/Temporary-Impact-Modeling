@@ -269,16 +269,38 @@ denominator, which is the conservative direction.
 Both from the Nasdaq data itself, which is the same single-venue feed
 arXiv 2606.24019 used, so the comparison with its prefactor is like for like.
 
-* **V_D**, the day's total RTH Nasdaq volume, sided and unsided prints together.
+* **V_D**, the day's total RTH-CONTINUOUS Nasdaq volume, `[09:30:00, 16:00:00)`,
+  sided and unsided prints together. RTH-continuous, not full-day, because
+  that is exactly what `build_cross_section_metaorders.py` sums before a trade
+  is binned, and `participation` (Q over that same total) has to match the
+  volume the proxy-metaorder filters were applied against. It excludes the
+  closing cross (printed at `16:00:00.000000000`, and `< 16:00:00` drops it)
+  and all pre-market and post-market activity.
 * **sigma_D**, realised volatility from FIVE-MINUTE trade prices scaled to a
   session. Five minutes rather than one second because a one-second trade-price
   series is dominated by bid-ask bounce, and bounce scales with tick size, which
   is the regressor under test. A bounce-contaminated sigma would plant the
   result being looked for.
 
-Every baseline participation rate here is a share of Nasdaq volume and the
-prefactor's level depends on that choice. The completed paired check finds a
-7.60 median consolidated-to-Nasdaq ratio across name medians.
+Every baseline participation rate here is a share of RTH-continuous Nasdaq
+volume and the prefactor's level depends on that choice. The completed paired
+check finds a 7.60 median consolidated-to-Nasdaq ratio across name medians
+against RTH-continuous volume, and 7.59 against FULL-DAY Nasdaq volume (every
+print, both auction crosses, extended hours included), the like-for-like
+figure against consolidated volume. Both ratios, per name and pooled, are in
+`reports/cross_section/venue_definitions.csv`
+(`scripts/build_venue_definitions.py`, computed straight from the raw trades
+files). Pooled they are close because most of the 108 names are not
+Nasdaq-listed and Nasdaq does not run a comparable closing cross for a
+non-Nasdaq-listed name; the ratio moves a lot (RTH-continuous 4.77 to
+full-day 2.94, for example) for the Nasdaq-listed minority, AAPL and KHC
+included. See the README's "Consolidated normaliser" section for the full
+breakdown by `crsp_exchcd`. `build_venue_definitions.py` applies the same
+minimum-trade-count and finite-volatility session filter
+`build_cross_section_metaorders.py` does, but does not require a session to
+have produced a metaorder; it finds 13,716 qualifying symbol-days against the
+1,017,071-order pipeline's 13,612, a 0.8% difference from sessions that pass
+the volume filter but yield no proxy metaorder.
 Observation-varying normalisers may change the fitted exponent as well;
 invariance requires a common constant rescaling.
 
@@ -318,6 +340,32 @@ only; prediction means and scores retain full precision. Verification requires
 exact counts, labels, hashes, missingness and row order, while floating values
 allow relative error `1e-8` and absolute error `1e-10`. These bounds accommodate
 numerical library differences and are below published headline precision.
+
+## The penalized B-spline liquidity profile
+
+`impact_model.fit_intraday_liquidity_profile` ports the notebook's P-spline
+cell (`notebook/Work_Trial_Task.ipynb`: a penalized cubic B-spline, six
+interior knots, roughness penalty chosen by generalized cross-validation,
+fitted to the minute-level average of first-level depth D_t) to scipy only,
+so it needs nothing beyond `requirements.txt`. It is tested against synthetic
+minute-level depth series with a known smooth shape in
+`tests/test_impact_model.py`; scipy's `BSpline.design_matrix` reproduces
+patsy's `bs()` basis exactly on the notebook's own grid and knots (checked
+offline, not part of this repo's test suite since patsy is not a project
+dependency).
+
+**No minute-level depth series is committed to feed it.** The notebook's
+`avg_dt` came from the work-trial MBP-10 snapshots (SOUN, FROG, CRWV) noted
+above: proprietary to their provider, gitignored, and gone. The fifteen-session
+Databento panel this repository does commit derived series for
+(`data/session_meta.csv`) carries only a per-session MEDIAN first-level ask
+depth, not a minute grid. Reconstructing a real `avg_dt` would mean pulling
+MBP-10 book snapshots for that panel and averaging first-level ask depth by
+minute across symbols and days, which is out of scope here. The function
+itself needs exactly two equal-length arrays: `minutes_since_open` (0 to 389
+for a standard 09:30-16:00 session, repeats allowed and averaged) and `depth`
+(the average first-non-empty ask size at that minute, e.g. from
+`first_nonzero_ask_depth`).
 
 ## Audit derived from existing committed tables, 2026-09-06
 
