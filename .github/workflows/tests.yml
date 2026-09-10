@@ -29,3 +29,6 @@ jobs:
 
       - name: Verify repaired conditional-impact reports
         run: python scripts/run_conditional_impact.py --check
+
+      - name: Verify scheduling-under-the-conditional-model reports
+        run: python scripts/run_schedule_conditional.py --check
