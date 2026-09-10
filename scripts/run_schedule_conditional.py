@@ -499,16 +499,30 @@ def input_manifest(sessions: list[str]) -> pd.DataFrame:
 # independent optimum on one machine (checked directly: 5,000 iterations
 # reproduces 20,000 bit for bit on all 12 sessions and all three risk-aversion
 # levels), but an iterative solver's agreement ACROSS machines is still a
-# solver-precision property, not exact arithmetic: an earlier, tighter AC
-# tolerance (1e-6 relative) left one cost value in 72 (1.4%) outside it on CI's
-# Linux runner, itself only ~1.5e-6 relative from this branch's macOS value
-# (the earlier, under-converged 400-iteration default missed by up to 25%, for
-# comparison). AC_FLOAT_RTOL keeps roughly two orders of magnitude of margin
-# above that observed cross-platform gap. Every other column (TWAP, VWAP, the
-# risk-neutral KKT schedule, and all non-schedule tables) keeps the strict,
-# closed-form tolerance below.
+# solver-precision property, not exact arithmetic. Two tolerance tiers for
+# kkt_ac_* rows, both checked against CI's Linux runner against this branch's
+# macOS-built committed values:
+# * AC_FLOAT_RTOL/ATOL for return-unit columns (cost_per_share,
+#   saving_per_share, magnitude ~1e-4 to 1e-2): the observed gap there was
+#   ~1.5e-6 relative; this keeps two orders of magnitude of margin above it.
+# * AC_PCT_RTOL/ATOL for percentage-POINT columns (saving_pct and
+#   pooled_summary's derived percentiles/bootstrap band, magnitude ~0.2 to
+#   200): relative tolerance alone is not meaningful there because a saving
+#   can sit arbitrarily close to zero, so a fixed absolute floor
+#   (AC_PCT_ATOL, in percentage points) does the real work. The observed gap
+#   was ~3.3e-5 percentage points on a near-zero saving; this keeps roughly
+#   thirty times that margin.
+# Every other column (TWAP, VWAP, the risk-neutral KKT schedule, and all
+# non-schedule tables) keeps the strict, closed-form tolerance, which every
+# run so far has matched exactly.
 AC_FLOAT_RTOL = 1e-4
 AC_FLOAT_ATOL = 1e-7
+AC_PCT_RTOL = 1e-4
+AC_PCT_ATOL = 1e-3
+PCT_COLUMNS = frozenset({
+    "saving_pct", "median_saving_pct", "q25_saving_pct", "q75_saving_pct",
+    "min_saving_pct", "max_saving_pct", "bootstrap_lo", "bootstrap_hi",
+})
 
 
 def verify_artifacts(expected_dir: Path, rebuilt_dir: Path) -> None:
@@ -533,13 +547,15 @@ def verify_artifacts(expected_dir: Path, rebuilt_dir: Path) -> None:
                     rtol=FLOAT_RTOL, atol=FLOAT_ATOL, obj=f"{name}/{column}",
                 )
                 continue
+            ac_rtol, ac_atol = ((AC_PCT_RTOL, AC_PCT_ATOL) if column in PCT_COLUMNS
+                               else (AC_FLOAT_RTOL, AC_FLOAT_ATOL))
             pd.testing.assert_series_equal(
                 left[~is_ac_row], right[~is_ac_row], check_exact=False,
                 rtol=FLOAT_RTOL, atol=FLOAT_ATOL, obj=f"{name}/{column} (non-AC rows)",
             )
             pd.testing.assert_series_equal(
                 left[is_ac_row], right[is_ac_row], check_exact=False,
-                rtol=AC_FLOAT_RTOL, atol=AC_FLOAT_ATOL, obj=f"{name}/{column} (AC rows)",
+                rtol=ac_rtol, atol=ac_atol, obj=f"{name}/{column} (AC rows)",
             )
 
 
