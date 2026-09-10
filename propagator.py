@@ -1,31 +1,15 @@
-"""Transient-impact propagator calibrated on real order flow.
+"""Distributed-lag RETURN response fitted to signed flow.
 
-The piecewise model elsewhere in this repo is MEMORYLESS: the cost of trading at
-minute t depends only on size at t. Real impact decays rather than vanishing, so
-a trade moves the price and that move relaxes over the following seconds. The
-propagator model of Bouchaud and co-authors captures this,
+    r_t = sum_{l=0..L} b(l) * f(v_{t-l}) + noise
 
-    r_t  =  sum_{l=0..L} G(l) * f(v_{t-l})  +  noise
+The retained public name `kernel` means return coefficients b, not the surviving
+price-level displacement. The latter is the cumulative sum of b through the
+identified horizon. Near-zero lagged b does not establish fast impact decay.
 
-where v is signed traded volume, f is a concavity transform, and G is the
-propagator kernel: G(0) is instantaneous impact and G(l>0) is what survives l
-periods later.
-
-This module calibrates G directly from data rather than assuming it, and answers
-two questions the snapshot book-walk elsewhere in this repo structurally cannot:
-
-1. DOES HISTORY MATTER? Comparing a memoryless model (L = 0) against one with
-   lags, out of sample, tests whether transient impact is real in this data or
-   whether the instantaneous model already suffices.
-
-2. IS IMPACT CONCAVE IN THE TIME-SERIES SENSE? The README notes the fitted
-   exponent from walking a static book is a cross-sectional depth property and
-   cannot speak to the square-root law. Here f(v) = sign(v)*|v|^delta is fitted
-   over a grid of delta, so concavity is estimated from the flow itself.
-
-Calibration follows the standard recipe: regress returns on lagged signed
-volumes across multiple lags and choose kernel parameters by out-of-sample R^2
-on a chronological split. Nothing here is fitted on the evaluation window.
+`fit_propagator` fits a fixed specification on the first window and scores its
+tail. `calibrate` chooses the best specification USING that tail, so its winner
+has a selected-validation score, not an untouched test score. Nested callers
+must reserve their own outer evaluation window, as conditional_impact.py does.
 """
 
 from __future__ import annotations
@@ -35,6 +19,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from kernel_response import return_to_level_response
 
 
 def signed_flow(volume: np.ndarray, delta: float) -> np.ndarray:
@@ -59,7 +45,7 @@ def build_lag_matrix(flow: np.ndarray, n_lags: int) -> np.ndarray:
 class PropagatorFit:
     delta: float
     n_lags: int
-    kernel: np.ndarray            # G(0..L)
+    kernel: np.ndarray            # return response b(0..L), not level impact
     r2_in: float
     r2_out: float
     n_train: int
@@ -71,11 +57,18 @@ class PropagatorFit:
 
     @property
     def decay_half_life(self) -> float:
-        """Lags until |G| first falls below half of |G(0)|; nan if it never does."""
-        if self.kernel.size < 2 or self.kernel[0] == 0:
+        """Level-response half-life on fitted support; nan if unobserved.
+
+        Historical versions applied this threshold to return coefficients,
+        incorrectly interpreting an absence of further returns as reversion.
+        """
+        # Predictive-only fits omit lag zero, so the initial level is unknown.
+        if (self.kernel.size != self.n_lags + 1 or self.kernel.size < 2
+                or self.kernel[0] == 0):
             return float("nan")
-        target = abs(self.kernel[0]) / 2.0
-        below = np.flatnonzero(np.abs(self.kernel[1:]) < target)
+        level = np.asarray(return_to_level_response(self.kernel))
+        target = abs(level[0]) / 2.0
+        below = np.flatnonzero(np.abs(level[1:]) <= target)
         return float(below[0] + 1) if below.size else float("nan")
 
 
@@ -137,7 +130,7 @@ class CalibrationReport:
 
     @property
     def history_gain(self) -> float:
-        """Out-of-sample R^2 improvement from lags over the memoryless model."""
+        """Selected-validation R2 gain from lags over same-delta L=0."""
         if self.memoryless is None:
             return float("nan")
         return self.best.r2_out - self.memoryless.r2_out
@@ -150,7 +143,11 @@ def calibrate(
     train_frac: float = 0.7,
     drop_contemporaneous: bool = False,
 ) -> CalibrationReport:
-    """Select (delta, n_lags) by out-of-sample R^2, never in-sample fit."""
+    """Select (delta, n_lags) on the scoring tail, which is validation data.
+
+    No untouched test result is produced by this function. Do not label the
+    selected winner's r2_out as unbiased OOS performance.
+    """
     mid = pd.to_numeric(frame["mid"], errors="coerce").to_numpy(dtype=float)
     vol = pd.to_numeric(frame["signed_vol"], errors="coerce").to_numpy(dtype=float)
     # log returns keep the scale comparable across the session

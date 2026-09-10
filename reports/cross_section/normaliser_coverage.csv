@@ -1,0 +1,2 @@
+n_symbols,n_proxy_orders,n_symbol_dates,n_consolidated_rows_loaded,missing_proxy_orders,missing_symbol_dates,crsp_volume_unit,crsp_daily_source,identifier_source,equs_validation_median_ratio
+108,1017071,13612,13716,0,0,shares,crsp.dsf_v2,crsp.dsenames,1.0

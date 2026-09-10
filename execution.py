@@ -1,46 +1,15 @@
-"""Optimal execution under the FITTED decay kernel, replayed on held-out bars.
+"""Execution algebra for typed price-level responses.
 
-THE SOLUTION
-------------
-With a linear propagator the expected cost of a schedule x over T steps is the
-quadratic form
+The empirical runner remains withdrawn. The reusable algebra now prevents the
+three defects it exposed: raw return coefficients cannot enter a level cost,
+the beyond-fit tail policy is explicit, and replay uses the exact same
+quadratic objective matrix as optimization.
 
-    C(x) = 1/2 sum_{s,t} G(|t - s|) x_s x_t = 1/2 x' M x,   M[s,t] = G(|t - s|)
-
-and minimising it subject to sum x = S has the closed-form solution of Gatheral,
-Schied and Slynko (Mathematical Finance 22, 2012):
-
-    x* = S M^{-1} 1 / (1' M^{-1} 1)
-
-Obizhaeva and Wang (Journal of Financial Markets 16, 2013) is the special case
-G(l) = G0 exp(-rho l), whose solution is the familiar bucket: a block at the
-start, a constant rate in the middle, a block at the end. Nothing here assumes
-that shape; M is built from the kernel actually fitted.
-
-WHY delta IS FIXED AT 1 HERE
-----------------------------
-The propagator elsewhere in this repo uses f(v) = sign(v)|v|^delta and selects
-delta by out-of-sample fit. The GSS solution above needs impact LINEAR in size,
-so this module refits the kernel with delta = 1 on the same training window.
-Deriving a schedule from a linear theory and then pricing it with a concave
-kernel would be an inconsistency dressed up as a result.
-
-NO-MANIPULATION IS CHECKED, NOT ASSUMED
----------------------------------------
-The solution is a minimum only when M is positive definite. A fitted kernel need
-not be: an empirical G with a sign change produces an indefinite M, which means
-the model admits a round trip with negative expected cost -- price manipulation.
-`kernel_matrix` reports the smallest eigenvalue, and when it is negative the
-matrix is projected onto the positive-semidefinite cone before inversion, with
-the projection reported rather than silently applied.
-
-THE CIRCULARITY, STATED
------------------------
-The propagator prices the impact of the schedule it chose. That is unavoidable:
-there is no counterfactual price path for an order that was never sent. It is
-also why the comparison runs against HELD-OUT bars, and why the reported saving
-is a saving under a model fitted on data the evaluation window does not contain.
-It is not a claim about money.
+For a specified level kernel, kernel_matrix and optimal_schedule implement
+M[s,t] = G(|t-s|) and the equality-constrained quadratic solution
+x = S M^-1 1 / (1' M^-1 1). `replay_cost` uses that same quadratic impact
+objective and adds only exogenous mid-price drift. These theoretical helpers do
+not establish a valid empirical kernel or a schedule with no price manipulation.
 """
 
 from __future__ import annotations
@@ -50,12 +19,25 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from kernel_response import LevelResponse
 from propagator import build_lag_matrix
+
+SCHEDULE_WITHDRAWAL = (
+    "Empirical schedule withdrawn: fitted return coefficients are not a "
+    "price-level impact kernel. Specify and validate the supported level "
+    "horizon and execution-price convention before replaying. See "
+    "docs/kernel_audit.md; reproduce the diagnostic with "
+    "python scripts/audit_kernel_response.py --check."
+)
 
 
 def fit_linear_kernel(returns: np.ndarray, volume: np.ndarray, n_lags: int,
                       train_end: int) -> np.ndarray:
-    """OLS kernel G(0..L) with delta = 1, fitted on rows before `train_end`."""
+    """OLS RETURN coefficients b(0..L), fitted before `train_end`.
+
+    The public function name is retained. Its output cannot be passed directly
+    to `kernel_matrix`, which expects a price-level response.
+    """
     design = build_lag_matrix(volume.astype(float), n_lags)
     ok = np.isfinite(design).all(axis=1) & np.isfinite(returns)
     ok[train_end:] = False
@@ -90,21 +72,32 @@ class KernelMatrix:
     M: np.ndarray
     min_eigenvalue: float
     projected: bool
+    response: LevelResponse
 
 
-def kernel_matrix(kernel: np.ndarray, T: int, floor: float = 1e-12) -> KernelMatrix:
-    """Toeplitz M[s,t] = G(|t-s|), projected to PSD if the fit is indefinite."""
-    L = len(kernel) - 1
+def kernel_matrix(
+    response: LevelResponse,
+    T: int,
+    floor: float = 1e-12,
+) -> KernelMatrix:
+    """Build Toeplitz M from a typed level response and explicit tail policy."""
+    if not isinstance(response, LevelResponse):
+        raise TypeError(
+            "kernel_matrix requires LevelResponse; convert fitted return "
+            "coefficients with level_response_from_returns first"
+        )
+    kernel = np.asarray(response.for_horizon(T), dtype=float)
     lags = np.abs(np.subtract.outer(np.arange(T), np.arange(T)))
-    M = np.where(lags <= L, kernel[np.minimum(lags, L)], 0.0)
+    M = kernel[lags]
     M = 0.5 * (M + M.T)
     evals, evecs = np.linalg.eigh(M)
     lo = float(evals.min())
-    if lo <= 0:
-        clipped = np.clip(evals, floor * float(evals.max()), None)
+    scale = max(float(np.abs(evals).max()), 1.0)
+    if lo < -floor * scale:
+        clipped = np.clip(evals, floor * scale, None)
         M = evecs @ np.diag(clipped) @ evecs.T
-        return KernelMatrix(M, lo, True)
-    return KernelMatrix(M, lo, False)
+        return KernelMatrix(M, lo, True, response)
+    return KernelMatrix(M, lo, False, response)
 
 
 def optimal_schedule(km: KernelMatrix, S: float) -> np.ndarray:
@@ -134,28 +127,44 @@ def almgren_chriss(T: int, S: float, kappa: float) -> np.ndarray:
     return S * trades / trades.sum()
 
 
-def replay_cost(schedule: np.ndarray, mid: np.ndarray, kernel: np.ndarray
-                ) -> dict[str, float]:
-    """Cost per share of executing `schedule`, split into its two sources.
+def model_cost(schedule: np.ndarray, km: KernelMatrix) -> float:
+    """The exact quadratic objective minimized by :func:`optimal_schedule`."""
+    values = np.asarray(schedule, dtype=float)
+    if values.ndim != 1 or len(values) != km.M.shape[0]:
+        raise ValueError("schedule length must match the kernel matrix")
+    return 0.5 * float(values @ km.M @ values)
 
-    The realised bars carry everything the market did without this order. The
-    order's OWN displacement is priced by the fitted kernel on top:
 
-        paid_t = mid_t * exp(sum_{s<=t} G(t-s) x_s)
+def replay_cost(
+    schedule: np.ndarray,
+    mid: np.ndarray,
+    km: KernelMatrix,
+) -> dict[str, float]:
+    """Replay exogenous drift plus the same impact objective used to optimize.
 
-    Splitting matters. `drift` is the realised move of the market between
-    arrival and each fill, which every schedule is exposed to and none of them
-    controls; over a ten-minute afternoon window it is an order of magnitude
-    larger than any impact term and it is noise, not skill. `impact` is the part
-    the model actually claims to optimise. A comparison reported only on the
-    total is a comparison of which schedule got luckier about the drift.
+    The impact term is the quadratic model cost per share, converted to price
+    units at the arrival mid. This makes optimizer and replay rankings
+    identical. It does not turn an observational fit into a causal model.
     """
-    T = len(schedule)
-    own = np.convolve(schedule, kernel)[:T]
-    weights = schedule / np.sum(schedule)
-    drift = float(np.sum(weights * mid[:T]) - mid[0])
-    impact = float(np.sum(weights * mid[:T] * np.expm1(own)))
-    return {"total": drift + impact, "drift": drift, "impact": impact}
+    if not isinstance(km, KernelMatrix):
+        raise TypeError("replay_cost requires the KernelMatrix used for optimization")
+    schedule = np.asarray(schedule, dtype=float)
+    mid = np.asarray(mid, dtype=float)
+    if len(mid) < len(schedule):
+        raise ValueError("mid path is shorter than the schedule")
+    size = float(np.sum(schedule))
+    if not np.isfinite(size) or size == 0.0:
+        raise ValueError("schedule must have finite nonzero total size")
+    weights = schedule / size
+    drift = float(np.sum(weights * mid[: len(schedule)]) - mid[0])
+    objective = model_cost(schedule, km)
+    impact = float(mid[0] * objective / size)
+    return {
+        "total": drift + impact,
+        "drift": drift,
+        "impact": impact,
+        "impact_objective": objective,
+    }
 
 
 @dataclass
@@ -174,45 +183,8 @@ def replay_session(session: str, bars: pd.DataFrame, session_volume: float,
                    horizon: int = 600, n_starts: int = 40,
                    fractions=(0.005, 0.01, 0.02), train_frac: float = 0.7,
                    kappa: float = 0.005, seed: int = 0) -> list[ReplayResult]:
-    """Replay every schedule at many start times inside the held-out tail."""
-    mid = pd.to_numeric(bars["mid"], errors="coerce").to_numpy(float)
-    vol = pd.to_numeric(bars["signed_vol"], errors="coerce").to_numpy(float)
-    sec = bars["sec"].to_numpy(np.int64)
-    ret = np.full(len(mid), np.nan)
-    ret[1:] = np.log(mid[1:] / mid[:-1])
-
-    train_end = int(len(bars) * train_frac)
-    n_lags = select_lags(ret, vol, train_end)
-    kernel = fit_linear_kernel(ret, vol, n_lags, train_end)
-    km = kernel_matrix(kernel, horizon)
-
-    rng = np.random.default_rng(seed)
-    latest = len(bars) - horizon - 1
-    if latest <= train_end:
-        raise ValueError(f"{session}: held-out window shorter than the horizon")
-    starts = rng.choice(np.arange(train_end, latest), size=min(n_starts,
-                        latest - train_end), replace=False)
-
-    results = []
-    for start in np.sort(starts):
-        window = mid[start:start + horizon]
-        if not np.all(np.isfinite(window)) or window[0] <= 0:
-            continue
-        for fraction in fractions:
-            S = fraction * session_volume
-            schedules = {
-                "TWAP": twap(horizon, S),
-                "propagator_optimal": optimal_schedule(km, S),
-                "almgren_chriss": almgren_chriss(horizon, S, kappa),
-            }
-            costs = {n: replay_cost(x, window, kernel) for n, x in schedules.items()}
-            # remaining inventory variance, the risk side of the tradeoff AC
-            # exists to buy; in units of the arrival price squared per second
-            inventory = {n: float(np.sum((S - np.cumsum(x)) ** 2))
-                         for n, x in schedules.items()}
-            results.append(ReplayResult(session, int(sec[start]), fraction, costs,
-                                        inventory))
-    return results
+    """Refuse the withdrawn empirical return-to-level scheduling shortcut."""
+    raise RuntimeError(SCHEDULE_WITHDRAWAL)
 
 
 def bootstrap_saving(results: list[ReplayResult], name: str, n_boot: int = 2000,

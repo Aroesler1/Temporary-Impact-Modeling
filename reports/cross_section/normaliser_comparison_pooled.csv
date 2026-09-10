@@ -1,0 +1,5 @@
+sample,normaliser,n_metaorders,delta,delta_lo,delta_hi,c_free,c_half,c_half_lo,c_half_hi
+all_proxy_orders,venue_volume_venue_sigma,1017071,0.30947629056548387,,,0.3677371519348309,1.068164359062227,,
+all_proxy_orders,consolidated_volume_venue_sigma,1017071,0.2940985568168349,,,0.5827813731181516,2.6822976152749103,,
+all_proxy_orders,venue_volume_consolidated_sigma,1017071,0.3083257836557354,,,0.31577622910905045,0.923279413934806,,
+all_proxy_orders,consolidated_volume_consolidated_sigma,1017071,0.30196655742748263,,,0.5373308222120765,2.3308171767294534,,

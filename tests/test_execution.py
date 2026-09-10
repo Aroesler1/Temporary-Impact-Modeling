@@ -6,11 +6,16 @@ import pandas as pd
 import pytest
 
 import execution as ex
+from kernel_response import hypothetical_level_response, level_response_from_returns
+
+
+def _level(values, tail_policy="zero"):
+    return hypothetical_level_response(values, tail_policy=tail_policy)
 
 
 def test_kernel_matrix_is_toeplitz_and_banded():
     kernel = np.array([1.0, 0.5, 0.25])
-    km = ex.kernel_matrix(kernel, T=6)
+    km = ex.kernel_matrix(_level(kernel), T=6)
     assert km.M[0, 0] == pytest.approx(km.M[3, 3])
     assert km.M[0, 1] == pytest.approx(0.5)
     assert km.M[0, 2] == pytest.approx(0.25)
@@ -21,7 +26,7 @@ def test_kernel_matrix_is_toeplitz_and_banded():
 def test_kernel_matrix_reports_and_repairs_an_indefinite_fit():
     """A kernel with a large negative lag makes M indefinite, which means the
     model admits a profitable round trip. That has to be visible."""
-    km = ex.kernel_matrix(np.array([1.0, -0.9]), T=8)
+    km = ex.kernel_matrix(_level([1.0, -0.9]), T=8)
     assert km.min_eigenvalue < 0
     assert km.projected
     assert np.linalg.eigvalsh(km.M).min() >= 0
@@ -30,13 +35,13 @@ def test_kernel_matrix_reports_and_repairs_an_indefinite_fit():
 def test_memoryless_kernel_makes_twap_optimal():
     """G(l) = 0 for l > 0 gives M proportional to the identity, whose
     minimum-cost schedule under a sum constraint is the flat one."""
-    km = ex.kernel_matrix(np.array([1.0]), T=25)
+    km = ex.kernel_matrix(_level([1.0]), T=25)
     x = ex.optimal_schedule(km, S=1000.0)
     np.testing.assert_allclose(x, ex.twap(25, 1000.0), rtol=1e-9)
 
 
 def test_optimal_schedule_meets_the_size_constraint():
-    km = ex.kernel_matrix(np.array([1.0, 0.6, 0.3, 0.1]), T=40)
+    km = ex.kernel_matrix(_level([1.0, 0.6, 0.3, 0.1]), T=40)
     x = ex.optimal_schedule(km, S=5000.0)
     assert x.sum() == pytest.approx(5000.0)
 
@@ -45,7 +50,7 @@ def test_optimal_schedule_beats_twap_under_its_own_cost_function():
     """The whole claim of the GSS solution: no other schedule has lower model
     cost. Checked against TWAP and against a thousand random perturbations."""
     kernel = np.exp(-0.3 * np.arange(6))          # Obizhaeva-Wang decay
-    km = ex.kernel_matrix(kernel, T=30)
+    km = ex.kernel_matrix(_level(kernel), T=30)
     S = 100.0
     x = ex.optimal_schedule(km, S)
 
@@ -63,7 +68,7 @@ def test_optimal_schedule_beats_twap_under_its_own_cost_function():
 def test_obizhaeva_wang_shape_appears_for_an_exponential_kernel():
     """The published solution for an exponentially decaying kernel is a block
     at each end and a constant rate between."""
-    km = ex.kernel_matrix(np.exp(-0.5 * np.arange(10)), T=50)
+    km = ex.kernel_matrix(_level(np.exp(-0.5 * np.arange(10))), T=50)
     x = ex.optimal_schedule(km, 1.0)
     middle = x[5:-5]
     assert x[0] > middle.max() * 1.05
@@ -86,7 +91,8 @@ def test_replay_cost_splits_drift_from_impact():
     kernel = np.array([1e-6])
     mid = np.full(50, 100.0)
     x = ex.twap(50, 1000.0)
-    out = ex.replay_cost(x, mid, kernel)
+    km = ex.kernel_matrix(_level(kernel), T=len(x))
+    out = ex.replay_cost(x, mid, km)
     assert out["drift"] == pytest.approx(0.0, abs=1e-12)
     # each second trades 20 shares, so own displacement at second t is
     # 1e-6 * 20 in log terms and the average paid price is above the mid
@@ -96,7 +102,8 @@ def test_replay_cost_splits_drift_from_impact():
 
 def test_replay_cost_charges_drift_to_a_flat_schedule_only_once():
     mid = np.linspace(100.0, 101.0, 51)[:50]
-    out = ex.replay_cost(ex.twap(50, 100.0), mid, np.array([0.0]))
+    km = ex.kernel_matrix(_level([0.0]), T=50)
+    out = ex.replay_cost(ex.twap(50, 100.0), mid, km)
     assert out["impact"] == pytest.approx(0.0)
     assert out["drift"] == pytest.approx(mid.mean() - mid[0])
 
@@ -104,11 +111,33 @@ def test_replay_cost_charges_drift_to_a_flat_schedule_only_once():
 def test_replay_cost_penalises_concentrating_into_one_second():
     kernel = np.array([1e-5])
     mid = np.full(40, 100.0)
-    spread_out = ex.replay_cost(ex.twap(40, 4000.0), mid, kernel)["impact"]
+    km = ex.kernel_matrix(_level(kernel), T=40)
+    spread_out = ex.replay_cost(ex.twap(40, 4000.0), mid, km)["impact"]
     concentrated = np.zeros(40)
     concentrated[0] = 4000.0
-    lumped = ex.replay_cost(concentrated, mid, kernel)["impact"]
+    lumped = ex.replay_cost(concentrated, mid, km)["impact"]
     assert lumped > spread_out
+
+
+def test_replay_impact_uses_the_optimizer_objective_exactly():
+    km = ex.kernel_matrix(_level(np.exp(-0.3 * np.arange(8))), T=30)
+    schedule = ex.optimal_schedule(km, 1000.0)
+    mid = np.full(30, 50.0)
+    replay = ex.replay_cost(schedule, mid, km)
+    assert replay["impact_objective"] == pytest.approx(ex.model_cost(schedule, km))
+    assert replay["impact"] == pytest.approx(
+        50.0 * ex.model_cost(schedule, km) / schedule.sum()
+    )
+
+
+def test_return_coefficients_require_explicit_level_conversion():
+    returns = np.array([1.0, -0.5, -0.25])
+    with pytest.raises(TypeError, match="LevelResponse"):
+        ex.kernel_matrix(returns, T=10)
+    level = level_response_from_returns(returns)
+    assert level.for_horizon(6) == [1.0, 0.5, 0.25, 0.25, 0.25, 0.25]
+    km = ex.kernel_matrix(level, T=6)
+    assert km.response.provenance == "fitted_return_coefficients"
 
 
 def test_select_lags_and_fit_linear_kernel_recover_a_known_kernel():

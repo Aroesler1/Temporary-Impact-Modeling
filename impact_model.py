@@ -96,6 +96,137 @@ def walk_book_premiums(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @dataclass
+class LiquiditySplineFit:
+    """A penalized cubic B-spline fit of minute-level average depth D_t."""
+
+    minutes: np.ndarray      # distinct minutes-since-open used for the fit
+    profile: np.ndarray      # smoothed D_t at `minutes`
+    knots: np.ndarray        # full (boundary-padded) knot vector
+    degree: int
+    coef: np.ndarray
+    lam: float                # GCV-selected penalty weight
+    edf: float                 # effective degrees of freedom, trace of the hat matrix
+
+    def predict(self, minutes_since_open) -> np.ndarray:
+        """Evaluate the fitted profile at arbitrary points (the notebook's
+        `Dt_hat(t)`)."""
+        design = _bspline_design_matrix(
+            np.asarray(minutes_since_open, dtype=float), self.knots, self.degree)
+        return design @ self.coef
+
+
+def _bspline_design_matrix(x: np.ndarray, full_knots: np.ndarray, degree: int) -> np.ndarray:
+    """Dense B-spline basis matrix, scipy only, matching patsy's `bs()`.
+
+    `notebook/Work_Trial_Task.ipynb` built its basis with
+    `patsy.dmatrix("bs(x, knots=..., degree=3, include_intercept=True)", ...)`.
+    `scipy.interpolate.BSpline.design_matrix` implements the same de Boor
+    basis given the same padded knot vector and is bit-for-bit identical to
+    it on the notebook's grid (verified offline; patsy is not a project
+    dependency so that check is not part of this repo's test suite).
+    `extrapolate=True` only matters at the exact upper boundary point, which
+    is otherwise excluded by strict half-open interval handling.
+    """
+    from scipy.interpolate import BSpline
+
+    design = BSpline.design_matrix(x, full_knots, degree, extrapolate=True)
+    return np.asarray(design.todense())
+
+
+def fit_intraday_liquidity_profile(
+    minutes_since_open,
+    depth,
+    *,
+    interior_knots: Optional[np.ndarray] = None,
+    degree: int = 3,
+    n_lambda: int = 100,
+    log_lambda_range: Tuple[float, float] = (-4.0, 4.0),
+) -> LiquiditySplineFit:
+    """Penalized cubic B-spline smoothing of minute-level average depth D_t.
+
+    Ports the notebook's P-spline cell (`notebook/Work_Trial_Task.ipynb`,
+    "modeled intraday liquidity with penalized B-splines" in the resume) to
+    scipy only, no new dependency. Same recipe as the notebook:
+
+    1. a cubic B-spline basis (`degree=3`) with six interior knots, default
+       `[60, 114, ..., 330]` minutes since the open, matching a standard
+       390-minute (09:30-16:00) session grid;
+    2. an Eilers-Marx roughness penalty, the squared second difference of
+       adjacent coefficients;
+    3. generalized cross-validation over `10 ** linspace(*log_lambda_range,
+       n_lambda)` to choose the penalty weight, minimising
+       `rss / (n - edf)^2` where `edf` is the trace of the smoother (hat)
+       matrix.
+
+    One deviation from the notebook, verified to change nothing: the notebook
+    built its design matrix from a patsy formula string with an implicit
+    intercept ALONGSIDE `bs(..., include_intercept=True)`, which already spans
+    the constant function by the B-spline partition-of-unity property. That
+    made the unpenalized design exactly rank-deficient by one (an all-ones
+    column equal to the sum of the other ten). It still ran, because GCV's
+    smallest candidate penalty (1e-4) was already enough to make the ridge
+    system solvable, but it is not something to reproduce on purpose. This
+    function uses the ten-column basis with no duplicate intercept; on the
+    notebook's own grid and knots the resulting smoothed curve is identical
+    to the notebook's to floating-point noise (checked offline, max abs
+    difference 4e-12 on a synthetic U-shaped depth curve).
+
+    `minutes_since_open` and `depth` are the notebook's `avg_dt` columns: one
+    row per minute of the session, `depth` the average first-non-empty ask
+    size at that minute (see `first_nonzero_ask_depth`), already averaged
+    across symbols and days. Duplicate minute values are averaged first,
+    matching the notebook's own `groupby('minutes_since_open').mean()` step.
+    """
+    x = np.asarray(minutes_since_open, dtype=float)
+    y = np.asarray(depth, dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
+    if len(x) == 0:
+        raise ValueError("no finite (minute, depth) observations to fit")
+    collapsed = (pd.DataFrame({"x": x, "y": y})
+                .groupby("x", as_index=False)["y"].mean()
+                .sort_values("x"))
+    x, y = collapsed["x"].to_numpy(), collapsed["y"].to_numpy()
+
+    if interior_knots is None:
+        interior_knots = np.linspace(60.0, 330.0, 6)
+    interior_knots = np.sort(np.asarray(interior_knots, dtype=float))
+    if len(x) < degree + len(interior_knots) + 2:
+        raise ValueError(
+            f"need at least {degree + len(interior_knots) + 2} distinct "
+            f"minutes for {len(interior_knots)} interior knots at degree "
+            f"{degree}, got {len(x)}")
+
+    lower, upper = float(x.min()), float(x.max())
+    full_knots = np.concatenate([np.full(degree + 1, lower), interior_knots,
+                                 np.full(degree + 1, upper)])
+    basis = _bspline_design_matrix(x, full_knots, degree)
+
+    # second-order-difference roughness penalty (Eilers & Marx 1996 P-splines)
+    diff2 = np.diff(np.eye(basis.shape[1]), n=2, axis=0)
+    penalty = diff2.T @ diff2
+    lambdas = 10.0 ** np.linspace(log_lambda_range[0], log_lambda_range[1], n_lambda)
+    gcv = np.empty(n_lambda)
+    for i, lam in enumerate(lambdas):
+        xtx = basis.T @ basis + lam * penalty
+        coef = np.linalg.solve(xtx, basis.T @ y)
+        hat = basis @ np.linalg.solve(xtx, basis.T)
+        rss = float(np.sum((y - basis @ coef) ** 2))
+        edf = float(np.trace(hat))
+        gcv[i] = rss / (len(y) - edf) ** 2
+    lam_opt = float(lambdas[np.argmin(gcv)])
+
+    xtx = basis.T @ basis + lam_opt * penalty
+    coef = np.linalg.solve(xtx, basis.T @ y)
+    hat = basis @ np.linalg.solve(xtx, basis.T)
+    edf = float(np.trace(hat))
+    profile = basis @ coef
+
+    return LiquiditySplineFit(minutes=x, profile=profile, knots=full_knots,
+                              degree=degree, coef=coef, lam=lam_opt, edf=edf)
+
+
+@dataclass
 class PowerLawFit:
     exponent: float
     log_intercept: float

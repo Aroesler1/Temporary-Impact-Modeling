@@ -70,7 +70,8 @@ def main() -> int:
     frame = pd.DataFrame(rows)
     frame.to_csv(args.out_dir / "per_session.csv", index=False)
 
-    print("PROPAGATOR AND METAORDER NUMBERS ACROSS 15 SYMBOL-DAYS")
+    print("RETURN RESPONSE AND METAORDER NUMBERS ACROSS 15 SYMBOL-DAYS")
+    print("R2 selects and scores on the same validation tail; no untouched test.")
     print("The published pair (0.36599 / 0.43229 explanatory, 0.00423 / 0.00455 "
           "predictive)\nand the exponent 0.370 were each one session. Here is "
           "the same code on fifteen.\n")
@@ -95,7 +96,7 @@ def main() -> int:
     positive_pred = int((frame.predictive_r2 > 0).sum())
     print(f"\nthe explanatory-versus-predictive gap (explanatory at least 10x the "
           f"absolute\npredictive R2) holds on {gap} of {len(frame)} sessions.")
-    print(f"predictive out-of-sample R2 is POSITIVE on {positive_pred} of "
+    print(f"predictive selected-validation R2 is POSITIVE on {positive_pred} of "
           f"{len(frame)} sessions; on the rest the\nbest lagged model is worse "
           f"than predicting the mean.")
     print(f"history gain over the memoryless model, median "

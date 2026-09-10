@@ -72,6 +72,24 @@ def test_realised_impact_is_signed_by_the_order_direction():
     assert got[0] == pytest.approx(np.log(1.01))
 
 
+def test_training_orders_must_finish_before_the_split():
+    bars = pd.DataFrame({"sec": np.arange(100.0, 110.0)})
+    orders = pd.DataFrame(
+        {
+            "order": ["train", "crosses", "test"],
+            "t_start": [101.0, 105.0, 107.0],
+            "t_end": [102.0, 107.0, 108.0],
+        }
+    )
+
+    train, test, split = ci.split_orders_for_evaluation(
+        bars, orders, train_frac=0.7
+    )
+    assert split == 107.0
+    assert train["order"].tolist() == ["train"]
+    assert test["order"].tolist() == ["test"]
+
+
 def test_fit_sqrt_coefficient_recovers_a_known_c():
     rng = np.random.default_rng(1)
     n, volume, sigma = 5000, 1e7, 0.02
@@ -144,8 +162,21 @@ def test_evaluate_session_scores_a_perfect_model_near_one():
         "t_start": sec, "t_end": sec,
         "mid_start": np.r_[100.0, mid[:-1]], "mid_end": mid,
     })
+    split_second = float(bars["sec"].iloc[int(n * 0.7)])
+    orders.loc[len(orders)] = {
+        "sign": 1.0,
+        "shares": 10.0,
+        "t_start": split_second - 0.5,
+        "t_end": split_second + 0.5,
+        "mid_start": 100.0,
+        "mid_end": 100.0,
+    }
     result = ci.evaluate_session("SYNTH", bars, orders, session_volume=1e7,
                                  sigma_d=0.02)
+    assert result.split_second == split_second
+    assert result.n_train == 4200
+    assert result.n_test == 1800
+    assert result.n_crossing_excluded == 1
     assert result.calibration.delta == 1.0
     assert result.r2("propagator") > 0.99
     assert result.scores["propagator"]["slope"] == pytest.approx(1.0, abs=0.02)

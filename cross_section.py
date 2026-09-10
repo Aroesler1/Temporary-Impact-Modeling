@@ -139,6 +139,30 @@ def trade_bars(sec: np.ndarray, price: np.ndarray, size: np.ndarray,
     return grouped.reset_index()
 
 
+def venue_volume_definitions(sec: np.ndarray, size: np.ndarray
+                             ) -> tuple[float, float]:
+    """Two totals from one session's raw prints: RTH-continuous and full-day.
+
+    RTH-CONTINUOUS is `[RTH_OPEN_SEC, RTH_CLOSE_SEC)`, exactly the filter
+    `scripts/build_cross_section_metaorders.py` applies before it ever sees a
+    trade. This is V_D in the metaorder builder and in every fit in this
+    module: it excludes the closing cross (timestamped AT `RTH_CLOSE_SEC`, so
+    `< RTH_CLOSE_SEC` drops it) and everything in the pre-market and
+    post-market sessions, though a print timestamped exactly at the open is
+    included since the bound there is `>=`.
+
+    FULL-DAY sums every print in the file for that date with no time-of-day
+    filter at all: pre-market, both auction crosses, and post-market. This is
+    the definition that matches a full-day CONSOLIDATED volume figure, which
+    is why comparing it against consolidated volume is like for like while
+    comparing RTH-continuous against consolidated volume is not.
+    """
+    sec = np.asarray(sec, np.int64)
+    size = np.asarray(size, dtype=float)
+    rth = (sec >= RTH_OPEN_SEC) & (sec < RTH_CLOSE_SEC)
+    return float(size[rth].sum()), float(size.sum())
+
+
 def realised_vol_5min(sec: np.ndarray, price: np.ndarray) -> float:
     """Daily volatility from five-minute trade prices, scaled to a session.
 
@@ -238,20 +262,11 @@ def ols_robust(y: np.ndarray, X: pd.DataFrame) -> OLSResult:
 
 
 def consolidated_normalisers(symbols, start: str, end: str) -> pd.DataFrame:
-    """CRSP consolidated volume and trailing close-to-close volatility.
+    """Load verified CRSP consolidated volume and trailing volatility offline.
 
-    NOT IMPLEMENTED, and deliberately a raising stub rather than a silent
-    fallback. Every V_D and sigma_D in this study is single-venue Nasdaq, which
-    is the same feed arXiv 2606.24019 used, so the comparison with the published
-    prefactor is like for like. The consolidated variant is a SECOND normaliser
-    that would change the level of c and not the exponent, and it is left as a
-    pending row in the README.
-
-    WRDS was refusing logins from this machine when the cross-section was built,
-    so nothing here depends on it. When WRDS is reachable this should query CRSP
-    daily stock file volume and returns for the same symbols and window.
+    Missing cache, identifiers, units, or requested coverage raises. Venue
+    volume is never substituted for a missing consolidated observation.
     """
-    raise NotImplementedError(
-        "the consolidated CRSP normaliser is a pending row. WRDS was "
-        "unreachable when this branch was built and no result in the "
-        "cross-section depends on it. See the pending row in README.md.")
+    from crsp import load_consolidated_cache
+
+    return load_consolidated_cache(symbols, start, end)

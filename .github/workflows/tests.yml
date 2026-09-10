@@ -26,3 +26,6 @@ jobs:
       # a secret was configured.
       - name: Run tests
         run: python -m pytest tests -q
+
+      - name: Verify repaired conditional-impact reports
+        run: python scripts/run_conditional_impact.py --check

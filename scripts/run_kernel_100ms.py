@@ -1,26 +1,13 @@
 #!/usr/bin/env python3
-"""Refit the propagator on sub-second bars and look for the decay.
+"""Descriptive return-response fits on sub-second bars.
 
-At one second the fitted kernel is nearly memoryless: `G(1)/G(0)` never exceeds
-0.11 in absolute value and the optimal execution schedule collapses to TWAP.
-The obvious objection is that one second is simply too coarse to resolve the
-relaxation, since the propagator literature usually works in trade or event
-time. This tests that objection directly, on the same sessions, the same 70/30
-split and the same (delta, L) selection rule.
+The historical G columns contain RETURN coefficients, not surviving level
+impact. Delta and lag count are selected on the reported validation tail.
+Neither the selected R2 nor a near-zero lag-one coefficient identifies a causal
+relaxation horizon. See docs/kernel_audit.md for the withdrawn interpretation.
 
-Two things are reported separately and should not be confused:
-
-* the SELECTED L per session, chosen by out-of-sample R2 exactly as the
-  one-second calibration chooses it;
-* the kernel SHAPE, `G(l)/G(0)` for the first 20 lags, refitted at a fixed
-  L = 20 with the session's own selected delta. Fixed, because a shape averaged
-  over sessions with different L would be averaging vectors of different
-  lengths and the band would be meaningless.
-
-The band is a bootstrap over symbol-days. Nothing is pooled across symbols.
-
-Usage:
-    python scripts/run_kernel_100ms.py
+This expensive raw-cache path is not needed for the committed audit:
+    python scripts/audit_kernel_response.py --check
 """
 from __future__ import annotations
 
@@ -109,7 +96,7 @@ def main() -> int:
         "n_sessions_positive": (shapes > 0).sum(axis=0),
     })
     shape_table.to_csv(args.out_dir / "kernel_shape.csv", index=False)
-    print(f"\nKERNEL SHAPE G(l)/G(0), refitted at a fixed L = {N_SHAPE_LAGS}, "
+    print(f"\nRETURN COEFFICIENTS b(l)/b(0), refitted at a fixed L = {N_SHAPE_LAGS}, "
           f"mean over 15 symbol-days\nwith a bootstrap band by symbol-day\n")
     print(shape_table.to_string(index=False, float_format=lambda v: f"{v:0.4f}"))
 
@@ -121,7 +108,6 @@ def main() -> int:
     tail = shape_table.iloc[2:]
     tail_signif = tail[(tail.band_lo > 0) | (tail.band_hi < 0)]
     tail_negative = int((tail_signif.mean_G_over_G0 < 0).sum())
-    visible = bool(g1_nonzero and above_one >= 8)
 
     print(f"\nCRITERION 1, L above 1: {above_one} of {len(summary)} sessions "
           f"(median selected L {int(summary.selected_lags.median())})  -> MET")
@@ -129,37 +115,19 @@ def main() -> int:
           f"{shapes[:, 1].mean():+.4f}, band [{g1_lo:+.4f}, {g1_hi:+.4f}] "
           f"{'excludes' if g1_nonzero else 'CONTAINS'} zero  -> "
           f"{'MET' if g1_nonzero else 'NOT MET'}")
-    print(f"\nVERDICT: decay at {args.bin_ms} ms is "
-          f"{'VISIBLE' if visible else 'NOT VISIBLE'}")
-    if not visible:
-        print(f"  Relaxation on these three names is complete within "
-              f"{args.bin_ms} ms at this resolution: the first lag carries "
-              f"nothing\n  distinguishable from zero. The scheduling result "
-              f"stands as it is, and there is no\n  kernel memory for a "
-              f"schedule to exploit.")
-        print(f"\n  What IS there, and it is not decay: {len(tail_signif)} of "
-              f"{len(tail)} lags from 2 to {N_SHAPE_LAGS} have bands excluding "
-              f"zero, and\n  {tail_negative} of those {len(tail_signif)} are "
-              f"NEGATIVE, averaging "
-              f"{tail_signif.mean_G_over_G0.mean():+.4f} of G(0). A transient-"
-              f"impact kernel\n  decays from positive toward zero. This one "
-              f"crosses to a small persistent negative\n  tail, which is price "
-              f"reverting after flow rather than impact relaxing, and it is\n"
-              f"  what the selected L is picking up. Adding lags buys a median "
-              f"{summary.history_gain.median():+.5f} of\n  out-of-sample R2.")
-    else:
-        print(f"  Rerun execution.py on the {args.bin_ms} ms bars.")
-    pd.DataFrame([{"bin_ms": args.bin_ms, "decay_visible": visible,
-                   "criterion_L_above_1": above_one >= 8,
-                   "criterion_G1_nonzero": g1_nonzero,
-                   "sessions_with_L_above_1": above_one,
-                   "mean_G1_over_G0": float(shapes[:, 1].mean()),
-                   "band_lo": float(g1_lo), "band_hi": float(g1_hi),
-                   "significant_tail_lags": int(len(tail_signif)),
-                   "of_which_negative": tail_negative,
-                   "mean_significant_tail": float(tail_signif.mean_G_over_G0.mean()),
-                   "median_history_gain": float(summary.history_gain.median()),
-                   }]).to_csv(args.out_dir / "verdict.csv", index=False)
+    print("\nNo level-decay or scheduling verdict follows from return coefficients.")
+    print("The reported R2 is selected validation, not an untouched test score.")
+    pd.DataFrame([{
+        "bin_ms": args.bin_ms,
+        "status": "return_response_only_no_execution_verdict",
+        "selection": "same_tail_selected_validation",
+        "sessions_with_L_above_1": above_one,
+        "mean_return_lag1_over_initial": float(shapes[:, 1].mean()),
+        "marginal_band_lo": float(g1_lo), "marginal_band_hi": float(g1_hi),
+        "tail_lags_with_pointwise_bands_excluding_zero": int(len(tail_signif)),
+        "of_which_negative": tail_negative,
+        "median_validation_history_gain": float(summary.history_gain.median()),
+    }]).to_csv(args.out_dir / "return_response_diagnostics.csv", index=False)
 
     _figure(shape_table, shapes, summary, args.bin_ms,
             args.figs_dir / f"kernel_{args.bin_ms}ms.png")
@@ -184,7 +152,7 @@ def _figure(table: pd.DataFrame, shapes: np.ndarray, summary: pd.DataFrame,
                  label="mean over 15 symbol-days")
     axes[0].axhline(0.0, color="black", lw=0.8)
     axes[0].set_xlabel(f"lag, in {bin_ms} ms bins")
-    axes[0].set_ylabel("G(l) / G(0)")
+    axes[0].set_ylabel("b(l) / b(0), return response")
     axes[0].set_title(f"Kernel shape at {bin_ms} ms\n"
                       "grey lines are individual symbol-days")
     axes[0].legend(fontsize=8)
@@ -196,7 +164,7 @@ def _figure(table: pd.DataFrame, shapes: np.ndarray, summary: pd.DataFrame,
                  ms=3.5, color="#b03a2e")
     axes[1].axhline(0.0, color="black", lw=0.8)
     axes[1].set_xlabel(f"lag, in {bin_ms} ms bins")
-    axes[1].set_ylabel("G(l) / G(0)")
+    axes[1].set_ylabel("b(l) / b(0), return response")
     axes[1].set_title("Lags 1 and beyond, rescaled\n"
                       "a band straddling zero is no memory")
     axes[1].grid(alpha=0.3)

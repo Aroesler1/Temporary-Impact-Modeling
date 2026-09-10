@@ -149,6 +149,32 @@ def test_halfhour_vol_profile_finds_a_planted_u_shape():
     assert np.nanmedian(profile[1:]) < profile[0]
 
 
+def test_venue_volume_definitions_full_day_exceeds_rth_continuous():
+    """Full-day includes the pre-market print, the opening cross (also caught
+    by RTH-continuous, since its lower bound is inclusive) and the closing
+    cross (dropped by RTH-continuous, since its upper bound is exclusive) and
+    the post-market print. RTH-continuous keeps only the open-cross and the
+    ordinary daytime print."""
+    sec = np.array([20_000,                       # pre-market
+                    cs.RTH_OPEN_SEC,               # opening cross
+                    cs.RTH_OPEN_SEC + 100,         # an ordinary RTH print
+                    cs.RTH_CLOSE_SEC,               # closing cross
+                    70_000])                        # post-market
+    size = np.array([10.0, 20.0, 30.0, 1000.0, 5.0])
+    rth, full_day = cs.venue_volume_definitions(sec, size)
+    assert rth == pytest.approx(50.0)              # 20 (open cross) + 30
+    assert full_day == pytest.approx(1065.0)       # every print, unfiltered
+    assert full_day > rth
+
+
+def test_venue_volume_definitions_agree_when_nothing_falls_outside_rth():
+    sec = np.array([cs.RTH_OPEN_SEC, cs.RTH_OPEN_SEC + 1000])
+    size = np.array([50.0, 75.0])
+    rth, full_day = cs.venue_volume_definitions(sec, size)
+    assert rth == pytest.approx(full_day)
+    assert rth == pytest.approx(125.0)
+
+
 def test_halfhour_vol_profile_leaves_a_thin_bucket_as_nan():
     sec = np.array([34200, 34500, 34800, 35100, 35400, 35700, 36000,
                     36300, 36600, 36900, 37200])
@@ -217,8 +243,8 @@ def test_ols_robust_refuses_an_underdetermined_fit():
                       pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]}))
 
 
-def test_consolidated_normaliser_is_a_raising_stub():
-    """It must fail loudly rather than fall back to venue volume and let a
-    consolidated claim be made from single-venue data."""
-    with pytest.raises(NotImplementedError, match="pending row"):
+def test_consolidated_normaliser_requires_external_verified_cache(monkeypatch):
+    """It must fail loudly rather than substitute single-venue data."""
+    monkeypatch.delenv("IMPACT_CRSP_CACHE_DIR", raising=False)
+    with pytest.raises(FileNotFoundError, match="IMPACT_CRSP_CACHE_DIR"):
         cs.consolidated_normalisers(["AAPL"], "2024-04-01", "2024-09-30")
