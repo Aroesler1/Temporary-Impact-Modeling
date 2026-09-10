@@ -13,8 +13,13 @@ import impact_model as im
 import panel
 from scripts.run_conditional_impact import build_profiles
 from scripts.run_schedule_conditional import (
+    AC_FLOAT_ATOL,
+    AC_FLOAT_RTOL,
+    AC_MAX_ITER,
     ARTIFACTS,
     EVENT_DAY_SESSION,
+    FLOAT_ATOL,
+    FLOAT_RTOL,
     RISK_AVERSION_MULTIPLIERS,
     _bucket_index,
     _minute_bucket,
@@ -348,3 +353,40 @@ def test_artifact_check_accepts_only_negligible_float_roundoff(tmp_path):
         pd.DataFrame({"n": [100], "saving": [0.2]}).to_csv(stored / name, index=False)
         pd.DataFrame({"n": [100], "saving": [0.2 + 1e-12]}).to_csv(rebuilt / name, index=False)
     verify_artifacts(stored, rebuilt)
+
+
+def _write_all_artifacts(base: Path, frame: pd.DataFrame) -> None:
+    for name in ARTIFACTS:
+        frame.to_csv(base / name, index=False)
+
+
+def test_ac_rows_get_a_looser_tolerance_than_everything_else(tmp_path):
+    """kkt_ac_* rows go through an iterative solver (SLSQP), so their own
+    columns tolerate solver-precision-level drift that would fail every other
+    schedule's strict tolerance."""
+    assert AC_FLOAT_RTOL > FLOAT_RTOL
+    assert AC_FLOAT_ATOL > FLOAT_ATOL
+    assert AC_MAX_ITER > 400            # allocate_schedule_risk_averse's own default
+
+    stored = pd.DataFrame({
+        "schedule": ["twap", "kkt_risk_neutral", "kkt_ac_low", "kkt_ac_high"],
+        "cost_per_share": [1.0, 0.9, 0.8, 2.0],
+    })
+    drift = (AC_FLOAT_RTOL + AC_FLOAT_ATOL) / 2       # inside the AC band, outside the strict one
+
+    ok_dir, expected_dir = tmp_path / "ok", tmp_path / "expected"
+    ok_dir.mkdir()
+    expected_dir.mkdir()
+    _write_all_artifacts(expected_dir, stored)
+    drifted_on_ac = stored.copy()
+    drifted_on_ac.loc[drifted_on_ac.schedule == "kkt_ac_low", "cost_per_share"] += 0.8 * drift
+    _write_all_artifacts(ok_dir, drifted_on_ac)
+    verify_artifacts(expected_dir, ok_dir)          # small drift on an AC row must pass
+
+    bad_dir = tmp_path / "bad"
+    bad_dir.mkdir()
+    drifted_on_twap = stored.copy()
+    drifted_on_twap.loc[drifted_on_twap.schedule == "twap", "cost_per_share"] += 0.8 * drift
+    _write_all_artifacts(bad_dir, drifted_on_twap)
+    with pytest.raises(AssertionError):             # same drift on TWAP must fail
+        verify_artifacts(expected_dir, bad_dir)

@@ -646,7 +646,7 @@ evidence.
 | KKT, mild front-load (0.1×λ_ref) | VWAP | +2.4% | [+2.1%, +4.4%] | 11 / 12 |
 
 Front-loading harder never pays here. At 1×λ_ref the schedule costs **16.1%
-more** than TWAP (median) and at 10×λ_ref it costs **122.7% more**, on all 12
+more** than TWAP (median) and at 10×λ_ref it costs **150.5% more**, on all 12
 sessions, under this same model-implied pricing. That is exactly what an
 Almgren-Chriss objective predicts once nothing in the evaluation rewards
 inventory-variance reduction on its own: buying it here is pure cost.
