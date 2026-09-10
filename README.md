@@ -712,8 +712,7 @@ against TWAP, 0 of 12 sessions at 0.1×, 1× and 10×λ_ref (medians -11.1%,
 real and the model's calibrated time-of-day shape is not accurate enough, on
 held-out data, to buy it back.
 
-**The rank correlation is negative on every session, which is expected given
-what the two coefficients measure, not fresh evidence against the model.**
+**The rank correlation is negative on every session: the model's time-of-day shape runs the wrong way across the held-out afternoon.**
 Spearman rho between each bucket's realised coefficient and the model's own
 time-of-day-implied coefficient is negative on **all 12 of 12 sessions**,
 median **-0.40**, range -1.0 to -0.2 (4 buckets a session, so each rho is a
@@ -727,9 +726,7 @@ half hour to the last (367 to 1,320, `bucket_coefficients.csv`), and `k_model`
 rises into the close (rank correlation with bucket position +0.27) while
 `k_realised` falls (-0.45): the two move in opposite directions because
 `k_model` reflects only the time-of-day volatility multiplier and
-`k_realised` reflects everything else moving in that bucket too. That is a
-structural mismatch in what the two numbers measure, not a new finding that
-`sqrt_tod_prior`'s section-1 calibration is wrong out of sample. **INTC
+`k_realised` reflects everything else moving in that bucket too. That does not touch the section-1 calibration, which is fitted on order size across the whole window and holds. It does show that the model's time-of-day multiplier mis-ranks the afternoon buckets out of sample: impact per unit of `sigma_D sqrt(Q/V_D)` falls into the close while `m(t)` rises. The multiplier is the only part of the model the schedule uses, so this is the mechanism behind the 0 of 12 above: the schedule moves volume away from the close, which is where held-out impact per unit participation is lowest. **INTC
 2024-08-02**, the post-earnings event day flagged throughout this README,
 sits at rho -0.40, exactly the panel median: not an outlier on this
 particular check.
@@ -753,8 +750,7 @@ particular check.
 - The sample is the same twelve symbol-days on three names in 2024 as the rest
   of this repository's fifteen-session panel. No population or regime claim.
 - The realised-bucket check, which does not depend on the model, favours KKT
-  over TWAP on no session and over VWAP on half, and finds a negative rank
-  correlation everywhere for structural reasons explained above. **Read the
+  over TWAP on no session and over VWAP on half, and finds a negative rank correlation everywhere because the model's time-of-day multiplier rises into the close while held-out impact per unit participation falls. **Read the
   model-implied table as what the model would say about itself, and the
   realised-bucket table as the answer to whether that shape is trustworthy out
   of sample: on this panel, it is not.**
