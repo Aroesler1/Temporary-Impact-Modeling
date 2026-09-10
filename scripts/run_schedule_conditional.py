@@ -496,14 +496,19 @@ def input_manifest(sessions: list[str]) -> pd.DataFrame:
 # kkt_ac_* schedules go through allocate_schedule_risk_averse (SLSQP), an
 # iterative optimizer, not the closed-form/bisection solvers behind every
 # other column. AC_MAX_ITER above already pushes it to a converged, path-
-# independent optimum (checked directly: 5,000 iterations reproduces 20,000
-# bit for bit on all 12 sessions and all three risk-aversion levels), but an
-# iterative solver's cross-platform agreement is still a solver-precision
-# property, not exact arithmetic, so its own columns get a looser, separately
-# documented tolerance. Every other column (TWAP, VWAP, the risk-neutral KKT
-# schedule, and all non-schedule tables) keeps the strict tolerance.
-AC_FLOAT_RTOL = 1e-6
-AC_FLOAT_ATOL = 1e-9
+# independent optimum on one machine (checked directly: 5,000 iterations
+# reproduces 20,000 bit for bit on all 12 sessions and all three risk-aversion
+# levels), but an iterative solver's agreement ACROSS machines is still a
+# solver-precision property, not exact arithmetic: an earlier, tighter AC
+# tolerance (1e-6 relative) left one cost value in 72 (1.4%) outside it on CI's
+# Linux runner, itself only ~1.5e-6 relative from this branch's macOS value
+# (the earlier, under-converged 400-iteration default missed by up to 25%, for
+# comparison). AC_FLOAT_RTOL keeps roughly two orders of magnitude of margin
+# above that observed cross-platform gap. Every other column (TWAP, VWAP, the
+# risk-neutral KKT schedule, and all non-schedule tables) keeps the strict,
+# closed-form tolerance below.
+AC_FLOAT_RTOL = 1e-4
+AC_FLOAT_ATOL = 1e-7
 
 
 def verify_artifacts(expected_dir: Path, rebuilt_dir: Path) -> None:
