@@ -315,6 +315,26 @@ def choose_bucket_coefficients(
     )
 
 
+def _check_buckets_covered(slice_bucket: np.ndarray, k_bucket: dict[int, float],
+                           session: str, bucket_seconds: int) -> None:
+    """Every bucket a schedule slice falls into must have a fitted coefficient.
+
+    `choose_bucket_coefficients` only fits a coefficient for buckets that held
+    at least `MIN_ORDERS_PER_BUCKET` held-out test orders. Slices and test
+    orders share the same held-out window on this panel, so this has not
+    triggered, but indexing `k_bucket` by an uncovered slice bucket would
+    otherwise raise an opaque KeyError instead of naming the problem.
+    """
+    missing = sorted(set(slice_bucket.tolist()) - set(k_bucket))
+    if missing:
+        raise ValueError(
+            f"{session}: {len(missing)} slice bucket(s) {missing} have no fitted "
+            f"realised coefficient (bucket_seconds={bucket_seconds}); "
+            "choose_bucket_coefficients only covers buckets with "
+            ">= MIN_ORDERS_PER_BUCKET held-out test orders"
+        )
+
+
 def model_bucket_coefficient(c_hat: float, prior_profile: pd.Series, bucket_id: int,
                              bucket_seconds: int) -> float:
     """The model's own implied coefficient for a bucket: c_hat times its
@@ -400,6 +420,7 @@ def evaluate_schedule_session(
     bucket_seconds, k_bucket, bucket_counts = choose_bucket_coefficients(
         test_orders, session_volume, sigma_d, split_second, last_sec)
     slice_bucket = _bucket_index(slice_start, bucket_seconds)
+    _check_buckets_covered(slice_bucket, k_bucket, session, bucket_seconds)
     k_per_slice = np.array([k_bucket[b] for b in slice_bucket])
 
     bucket_rows = []

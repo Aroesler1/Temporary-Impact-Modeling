@@ -230,6 +230,23 @@ def test_choose_bucket_coefficients_uses_half_hour_when_it_is_thick_enough():
     assert len(k_bucket) == 2
 
 
+def test_check_buckets_covered_passes_when_every_slice_bucket_has_a_coefficient():
+    from scripts.run_schedule_conditional import _check_buckets_covered
+
+    _check_buckets_covered(np.array([9, 9, 10, 11]), {9: 1.0, 10: 1.1, 11: 1.2},
+                           session="S", bucket_seconds=1800)
+
+
+def test_check_buckets_covered_names_the_missing_bucket_instead_of_a_keyerror():
+    """A slice bucket with no fitted coefficient must fail loudly and
+    specifically, not with a bare KeyError from the caller's dict lookup."""
+    from scripts.run_schedule_conditional import _check_buckets_covered
+
+    with pytest.raises(ValueError, match=r"12.*no fitted"):
+        _check_buckets_covered(np.array([9, 10, 12]), {9: 1.0, 10: 1.1},
+                               session="S", bucket_seconds=1800)
+
+
 def test_realised_cost_per_share_recovers_a_known_coefficient():
     x = np.full(10, 500.0)
     k = np.full(10, 0.8)
