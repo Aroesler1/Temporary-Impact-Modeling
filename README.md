@@ -7,7 +7,7 @@ being square-root, and does order flow say anything trade flow does not.
 
 **The sample is 15 symbol-days on three names in 2024**: MSFT, INTC and AAPL,
 five sessions each, on a selection rule fixed before any result was looked at.
-Section 6 is the one exception, and it is a narrow one: a cross-section of 108
+Section 7 is the one exception, and it is a narrow one: a cross-section of 108
 S&P 500 names on the Nasdaq venue only, April to September 2024, built from
 trades rather than the book. It is the only cross-sectional statement in this
 repository and it is not a market-wide one.
@@ -585,7 +585,144 @@ committed summaries alone.
 
 ---
 
-## 5. Order flow against trade flow
+## 5. Scheduling under the conditional model
+
+Section 4's schedule is withdrawn and stays withdrawn: this section does not
+resurrect a decay kernel, and nothing here uses a horizon past one execution
+slice. It reschedules the one model that validated out of sample instead,
+`sqrt_tod_prior` from section 1 (median OOS R² 0.206, calibration slope 0.955,
+the twelve sessions with a same-symbol prior session), and reports what the
+resulting schedule is worth two ways: priced by the same model that built it,
+and priced by coefficients fit fresh on held-out metaorders alone.
+
+**Every number below is model-implied or realised-bucket-priced. No schedule
+was executed. Nothing here is a realised execution cost.**
+
+### Setup, fixed before any saving was computed
+
+Per session: a parent order of **1% of the trailing 20-day ADV**
+(`adv_20d_xnas`, this repo's existing normaliser), executed over the held-out
+last 30% of the session in **one-minute slices**
+(`impact_model.allocate_schedule`'s own native unit; the held-out window is
+116 to 118 minutes on all twelve sessions, so the coarser fallback this script
+also implements is never used). A slice of `q` shares in minute `t` costs
+`q · c_hat · sigma_t · sqrt(q / V_t)`, in raw log-return units, the same units
+as `I = c sigma_D sqrt(Q/V)` in section 1 (multiply by 1e4 for bp): `c_hat` is
+`sqrt_tod_prior`'s own calibrated level, `sigma_t` is `sigma_D` times the
+strictly causal `prior` time-of-day multiplier, and `V_t` is a strictly causal
+per-minute volume profile, the median per-minute share of total volume across
+that symbol's sessions strictly BEFORE this one, scaled by this session's
+trailing 20-day ADV. Nothing from the scored session's own volume, and nothing
+from a later session, enters `V_t`.
+
+Under this cost, the KKT conditions give a risk-neutral optimum
+`q_t ∝ V_t / sigma_t²` (verified against the closed form in
+`tests/test_schedule_conditional.py` to floating-point precision), computed by
+`impact_model.allocate_schedule`, the KKT/bisection allocator already in this
+repo, through a thin, tested adapter (`_slice_depths`) rather than a second
+solver. The inventory-penalised optimum
+(`impact_model.allocate_schedule_risk_averse`, the Almgren-Chriss objective
+already here) is computed at three risk-aversion values, **0.1×, 1× and 10× a
+session-specific `lambda_ref`** that equalises the impact-cost and
+inventory-risk terms AT THE TWAP SCHEDULE, so the grid spans near-TWAP to
+clearly front-loaded on every session regardless of that session's absolute
+scale, fixed by the TWAP baseline alone before any schedule was compared.
+Four schedules are compared on identical slices: TWAP, VWAP on the causal
+volume profile, KKT risk-neutral, and KKT inventory-penalised at each
+risk-aversion value.
+
+### Model-implied saving
+
+Priced with the same `a_t = c_hat sigma_t / sqrt(V_t)` that built the
+schedule, so KKT risk-neutral is the cheapest schedule under this pricing by
+construction: this is a consistency check on the solver, not independent
+evidence.
+
+| schedule | vs | median saving | 95% band, bootstrap by session | sessions beating benchmark |
+|---|---|---:|---|---:|
+| KKT risk-neutral | TWAP | **+11.8%** | [+9.3%, +12.8%] | 12 / 12 |
+| KKT risk-neutral | VWAP | **+3.3%** | [+3.0%, +5.0%] | 12 / 12 |
+| KKT, mild front-load (0.1×λ_ref) | TWAP | +11.0% | [+8.6%, +12.0%] | 12 / 12 |
+| KKT, mild front-load (0.1×λ_ref) | VWAP | +2.4% | [+2.1%, +4.4%] | 11 / 12 |
+
+Front-loading harder never pays here. At 1×λ_ref the schedule costs **16.1%
+more** than TWAP (median) and at 10×λ_ref it costs **122.7% more**, on all 12
+sessions, under this same model-implied pricing. That is exactly what an
+Almgren-Chriss objective predicts once nothing in the evaluation rewards
+inventory-variance reduction on its own: buying it here is pure cost.
+
+### Realised-bucket-priced saving, the check that does not depend on the model
+
+Each session's held-out window is split into **half-hour buckets** (the
+finest of 30, 60 or 120 minutes, then the whole window, that leaves at least
+**30** reconstructed test-window metaorders in every bucket; half an hour was
+never too fine, the thinnest bucket on any of the twelve sessions held **86**
+orders). `conditional_impact.fit_sqrt_coefficient` is refit, unchanged, on
+each bucket's held-out metaorders alone, using the plain daily `sigma_D` and
+`V_D`, not the model's time-of-day profile, giving a coefficient the model
+never touched. Every schedule is then priced with these coefficients instead
+of `c_hat`.
+
+| schedule | vs | median saving | 95% band, bootstrap by session | sessions beating benchmark |
+|---|---|---:|---|---:|
+| KKT risk-neutral | TWAP | **-5.6%** | [-8.3%, +0.2%] | 3 / 12 |
+| KKT risk-neutral | VWAP | **+4.5%** | [-0.5%, +6.7%] | 8 / 12 |
+| KKT, mild front-load (0.1×λ_ref) | TWAP | -6.4% | [-7.9%, -0.8%] | 2 / 12 |
+| KKT, mild front-load (0.1×λ_ref) | VWAP | +3.7% | [-1.5%, +7.7%] | 8 / 12 |
+
+**The model-implied saving over TWAP does not survive contact with the
+realised-bucket pricing.** KKT risk-neutral beats TWAP on only 3 of 12
+sessions once bucket-level coefficients are fit fresh from held-out
+metaorders instead of assumed from the calibrated model, though it still
+beats VWAP on 8 of 12. The inventory-penalised schedules essentially never
+beat either benchmark under this pricing once risk aversion clears the mild
+end of the grid: against TWAP, 0 of 12 sessions at both 1×λ_ref and 10×λ_ref;
+against VWAP, 1 of 12 at 1×λ_ref and 0 of 12 at 10×λ_ref. The extra impact
+cost of front-loading is real and the model's assumed volume and volatility
+shape is not accurate enough, on held-out data, to buy it back.
+
+**The rank correlation is negative on every session.** Spearman rho between
+each bucket's realised coefficient and the model's own time-of-day-implied
+coefficient for that bucket is negative on **all 12 of 12 sessions**, median
+**-0.40**, range -1.0 to -0.2 (4 buckets a session, so each rho is a coarse
+statistic). The model's afternoon-quieter shape and the bucket-level realised
+coefficients disagree, on this panel, about which part of the session is more
+expensive to trade in, and that disagreement is the reason the model-implied
+saving does not transfer. **INTC 2024-08-02**, the post-earnings event day
+flagged throughout this README, sits at rho -0.40, exactly the panel median:
+not an outlier on this particular check.
+
+### What this does and does not establish
+
+- Every saving above is model-implied or realised-bucket-priced. No schedule
+  was executed, and nothing here is a realised execution cost.
+- No transient or permanent split is used or claimed. The per-slice cost
+  treats a one-minute slice's own square-root cost as the whole cost of that
+  slice; the two-second support limit in `docs/kernel_audit.md` is exactly why
+  nothing beyond one slice is assumed here.
+- The sample is the same twelve symbol-days on three names in 2024 as the rest
+  of this repository's fifteen-session panel. No population or regime claim.
+- The realised-bucket check, which does not depend on the model, favours KKT
+  over TWAP on a minority of sessions and finds a negative rank correlation
+  everywhere. **Read the model-implied table as what the model would say about
+  itself, and the realised-bucket table and the rank correlations as the
+  answer to whether that shape is trustworthy out of sample: on this panel, it
+  mostly is not.**
+
+Committed outputs are in `reports/schedule_conditional/`:
+`session_summary.csv`, `bucket_coefficients.csv`, `schedule_costs.csv` and
+`schedule_savings.csv` (tidy, one row per schedule/benchmark/pricing/session),
+`pooled_summary.csv`, `methodology.csv` (every pre-registered choice above,
+written down) and `input_manifest.csv`. Rebuild and compare with
+`python scripts/run_schedule_conditional.py --check`.
+
+```bash
+python scripts/run_schedule_conditional.py
+```
+
+---
+
+## 6. Order flow against trade flow
 
 Signed trade volume counts executions. Order flow imbalance counts the whole
 displayed book, arrivals and cancellations and executions, so it moves when a
@@ -637,9 +774,9 @@ python scripts/run_flow_comparison.py
 
 ---
 
-## 6. A cross-section of the square-root law: S&P 500 names on Nasdaq, April to September 2024
+## 7. A cross-section of the square-root law: S&P 500 names on Nasdaq, April to September 2024
 
-Sections 1 to 5 are three names on fifteen days. This section is the exception,
+Sections 1 to 6 are three names on fifteen days. This section is the exception,
 and its scope is stated before any number: **S&P 500 members on 2024-06-28,
 Nasdaq venue only, 2024-04-01 to 2024-09-30, built from trades rather than the
 book.** What that is not, said plainly:
@@ -713,7 +850,7 @@ Both are in `reports/cross_section/trades_validation.csv`, and
 and +0.9.
 
 Two consequences of using trades rather than the book, stated because they are
-real differences from sections 1 to 5. The price is the **last trade price** in
+real differences from sections 1 to 6. The price is the **last trade price** in
 a bin, not a mid, so every impact includes whatever bid-ask bounce falls between
 the first and last print of a run. And 17% to 22% of prints carry no side at
 all, about 32% of RTH volume: those are the hidden prints, and they count toward
@@ -953,7 +1090,7 @@ python scripts/build_venue_definitions.py --crsp-cache "$IMPACT_CRSP_CACHE_DIR"
 | `scripts/run_*.py` | derived series to the tables above |
 | `data/`, `reports/` | derived aggregates and results; see `DATA.md` |
 
-Everything in sections 1 to 5 reproduces from the committed derived data with no
+Everything in sections 1 to 6 reproduces from the committed derived data with no
 credentials and no vendor SDK. Rebuilding those series from raw extracts needs
 `requirements-extract.txt`, the shared Databento raw directory, and the sibling
 `lob-engine-cpp` checkout.

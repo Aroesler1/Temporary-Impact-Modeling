@@ -380,3 +380,26 @@ are retained historical results whose execution and relaxation interpretations
 are withdrawn. `docs/kernel_audit.md` explains why. The coefficient inputs are
 selected-validation diagnostics, not untouched test estimates, and cumulative
 confidence limits are not inferable from their marginal intervals.
+
+## Scheduling under the conditional model, 2026-09-10
+
+`reports/schedule_conditional/` reschedules the twelve sessions with a
+same-symbol prior session under `sqrt_tod_prior`, section 1's validated
+model, through the KKT/bisection allocator already in `impact_model.py`. No
+kernel, no propagator, no transient/permanent split. Built and verified by
+`python scripts/run_schedule_conditional.py --check`; the method, the
+pre-registered choices, and the numbers are in README section 5.
+
+| path | what | rows |
+|---|---|---|
+| `session_summary.csv` | per-session inputs: order size, slices, calibrated `c_hat`, risk-aversion grid, bucket choice, Spearman rho | 12 |
+| `bucket_coefficients.csv` | per session, per half-hour bucket: order count, realised coefficient, model-implied coefficient | 48 |
+| `schedule_costs.csv` | tidy: session, schedule, pricing (model or realised-bucket), cost per share | 144 |
+| `schedule_savings.csv` | tidy: session, schedule, benchmark (TWAP or VWAP), pricing, saving | 192 |
+| `pooled_summary.csv` | one row per schedule/benchmark/pricing: median and range of saving, bootstrap band by session, sessions beating the benchmark | 16 |
+| `methodology.csv` | every pre-registered choice (slice length, order size, risk-aversion grid, bucket rule) | 1 |
+| `input_manifest.csv` | SHA-256 hashes of every committed input read | 29 |
+
+Nothing here pulls WRDS or Databento; all inputs are the panel's own
+already-committed `data/session_meta.csv`, `data/<KEY>_1s.csv` and
+`data/<KEY>_metaorders.csv`.
