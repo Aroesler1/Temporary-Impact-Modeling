@@ -397,8 +397,17 @@ pre-registered choices, and the numbers are in README section 5.
 | `schedule_costs.csv` | tidy: session, schedule, pricing (model or realised-bucket), cost per share | 144 |
 | `schedule_savings.csv` | tidy: session, schedule, benchmark (TWAP or VWAP), pricing, saving | 192 |
 | `pooled_summary.csv` | one row per schedule/benchmark/pricing: median and range of saving, bootstrap band by session, sessions beating the benchmark | 16 |
-| `methodology.csv` | every pre-registered choice (slice length, order size, risk-aversion grid, bucket rule) | 1 |
+| `methodology.csv` | every pre-registered choice (slice length, order size, risk-aversion grid, bucket rule), the pooled held-out proxy-metaorder duration (median, q25, q75, n) and whether a volume-aware schedule family was built, with the score that decided it | 1 |
 | `input_manifest.csv` | SHA-256 hashes of every committed input read | 29 |
+
+The per-slice cost is `a_t = c_hat * sigma_t / sqrt(V_D)`, `V_D` the session's
+own daily volume, the SAME normaliser `sqrt_tod_prior`'s `c_hat` was
+calibrated against: applying the validated model slice by slice keeps its own
+normaliser rather than substituting a per-slice one. No volume-aware schedule
+family is built: `sqrt_rate`, the one order-level model in this repo with a
+volume/rate term, scores negative median OOS R2 on held-out orders
+(`reports/conditional_impact_corrected/model_comparison.csv`) and does not
+validate.
 
 Nothing here pulls WRDS or Databento; all inputs are the panel's own
 already-committed `data/session_meta.csv`, `data/<KEY>_1s.csv` and

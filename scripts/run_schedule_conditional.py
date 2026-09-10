@@ -30,18 +30,37 @@ PRE-REGISTERED CHOICES (fixed here, before any saving number was computed)
   sessions (checked below), far above `MIN_SLICES`; the fallback that halves
   the granularity if a session ever came up short is implemented but is not
   exercised by this panel, which the printed report states explicitly.
-* Per-slice cost: `q * c_hat * sigma_t * sqrt(q / V_t)`, i.e. a pure power law
-  `a_t * x^0.5` with `a_t = c_hat * sigma_t / sqrt(V_t)`, in RAW LOG-RETURN
+* Per-slice cost: `q * c_hat * sigma_t * sqrt(q / V_D)`, i.e. a pure power law
+  `a_t * x^0.5` with `a_t = c_hat * sigma_t / sqrt(V_D)`, in RAW LOG-RETURN
   units -- the same units as `I = c sigma_D sqrt(Q/V)` in section 1 and
   `conditional_impact.realised_impact`/`predict_sqrt` (not bp, not a
   sigma_D-divided ratio; multiply by 1e4 for bp). `sigma_t` is `sigma_D` times
   the session's `prior` half-hour time-of-day multiplier (the strictly causal
   variant already in `conditional_impact.py`; `loso` is not used here because
-  it is not strictly causal). `V_t` is a strictly causal per-minute VOLUME
-  PROFILE: the median, across that symbol's sessions strictly BEFORE this one,
-  of each donor's own per-minute share of its total volume, scaled by this
-  session's trailing 20-day ADV. Nothing from the scored session's own volume
-  or from a later session enters `V_t`.
+  it is not strictly causal). `V_D` is the session's own daily volume, the
+  SAME normaliser `fit_sqrt_coefficient` was calibrated against to produce
+  `c_hat`: applying a model slice by slice means keeping its own normaliser,
+  not substituting a per-slice one it was never fitted with. An earlier
+  version of this script divided by a strictly causal per-minute volume
+  profile instead (`V_t`, roughly 390x smaller than `V_D`); that inserted a
+  volume effect the validated model does not contain, applied a coefficient
+  calibrated against `V_D` to a normaliser two and a half orders of magnitude
+  smaller, and made the KKT optimum depend on a volume effect nothing in
+  section 1 validated. That was wrong and is corrected here. The strictly
+  causal per-minute volume profile (median, across that symbol's sessions
+  strictly BEFORE this one, of each donor's own per-minute share of its total
+  volume, scaled by this session's trailing 20-day ADV; nothing from the
+  scored session's own volume or a later session enters it) is kept below,
+  but only to shape the VWAP benchmark, not to price any cost.
+* Volume-aware order-level model: `conditional_impact.py`'s `sqrt_rate`
+  (`fit_rate_model`/`predict_rate_model`, the participation-rate term of
+  Zarinelli, Treccani, Farmer and Lillo 2015) is the one model in this repo
+  that is volume aware at the order level. Its corrected held-out score
+  (`reports/conditional_impact_corrected/model_comparison.csv`) is median OOS
+  R2 -0.257 on 15 sessions, median slope 0.569: negative R2, so it does not
+  validate. No volume-aware schedule family is built here, and no new
+  order-level model is fitted; `sqrt_rate` was already scored, and rejected,
+  in section 1.
 * KKT solver reuse: `impact_model.allocate_schedule` (risk-neutral) and
   `allocate_schedule_risk_averse` (Almgren-Chriss inventory-penalised) are the
   KKT/bisection allocators already in this repo, built for exactly this shape
@@ -79,6 +98,17 @@ nothing is a realised execution cost. The sample is twelve symbol-days on
 three names in 2024, the same panel as the rest of this repository, and
 carries no population or regime claim. INTC 2024-08-02 is the post-earnings
 event day flagged throughout this README and is flagged again below.
+
+Applying an order-level square-root law slice by slice assumes slice costs
+ADD across the schedule (`sum_t a_t x_t^1.5`), the Almgren-Chriss
+temporary-impact convention and not something this repo has validated: the
+square-root law in section 1 was fitted and scored on whole reconstructed
+metaorders, not on a sum of one-minute pieces of one. `input_manifest`'s
+sibling `methodology.csv` records the median and interquartile duration of
+the held-out proxy metaorders the model was scored on, so a reader can see
+whether a one-minute slice sits inside that range or outside it. Below,
+"schedule" means an allocation across a fixed count of one-minute slices, not
+a claim that any other slicing was tried or would cost less.
 
 Usage:
     python scripts/run_schedule_conditional.py
@@ -369,6 +399,7 @@ class SessionSchedule:
     model_costs: dict[str, float] = field(default_factory=dict)
     realised_costs: dict[str, float] = field(default_factory=dict)
     bucket_rows: list[dict] = field(default_factory=list)
+    test_order_durations: np.ndarray = field(default_factory=lambda: np.zeros(0))
 
 
 def evaluate_schedule_session(
@@ -407,9 +438,12 @@ def evaluate_schedule_session(
 
     vol_shape = prior_volume_profiles[session]
     v_t = _profile_over_slices(vol_shape, slice_start, slice_seconds) * adv   # shares in one slice
-    v_t = np.maximum(v_t, 1e-9)                       # defensive floor; never binds on this panel
+    v_t = np.maximum(v_t, 1e-9)      # defensive floor for the VWAP benchmark below; never binds
 
-    a_t = c_hat * sigma_t / np.sqrt(v_t)
+    # the validated model applied slice by slice, with its OWN daily normaliser V_D
+    # (session_volume): see the module docstring's "Per-slice cost" note. V_t (v_t
+    # above) is kept only to shape the VWAP benchmark, not to price this cost.
+    a_t = c_hat * sigma_t / np.sqrt(session_volume)
     order_size = ORDER_FRACTION_OF_ADV * adv
     sigma_per_slice = sigma_d / np.sqrt(MINUTES_PER_SESSION * 60.0 / slice_seconds)
 
@@ -444,6 +478,11 @@ def evaluate_schedule_session(
     realised_costs = {name: realised_cost_per_share(x, k_per_slice, sigma_d, session_volume)
                       for name, x in schedules.items()}
 
+    # duration of each held-out proxy metaorder, for the additivity-limit check in
+    # README section 5: whether one-minute slices sit inside the range the
+    # order-level square-root law was actually scored on (section 1).
+    durations = (test_orders["t_end"] - test_orders["t_start"]).to_numpy(float)
+
     return SessionSchedule(
         session=session, symbol=str(scales.symbol), is_event_day=(session == EVENT_DAY_SESSION),
         order_size=order_size, n_slices=n_slices, slice_seconds=slice_seconds,
@@ -451,6 +490,7 @@ def evaluate_schedule_session(
         risk_aversions=risk_aversions, bucket_seconds=bucket_seconds, bucket_counts=bucket_counts,
         spearman_rho=float(rho), spearman_p=float(pval),
         model_costs=model_costs, realised_costs=realised_costs, bucket_rows=bucket_rows,
+        test_order_durations=durations,
     )
 
 
@@ -659,8 +699,10 @@ def build(out_dir: Path) -> None:
     pooled = pd.DataFrame(pooled_rows)
     pooled.to_csv(out_dir / "pooled_summary.csv", index=False)
 
+    all_durations = np.concatenate([r.test_order_durations for r in results.values()])
+
     pd.DataFrame([{
-        "report_version": "schedule-conditional-v1",
+        "report_version": "schedule-conditional-v2",
         "n_sessions": len(sessions),
         "slice_seconds": SLICE_SECONDS,
         "min_slices": MIN_SLICES,
@@ -678,6 +720,18 @@ def build(out_dir: Path) -> None:
             (summary["slice_seconds"] > SLICE_SECONDS).any()),
         "any_session_used_coarser_than_half_hour_buckets": bool(
             (summary["bucket_seconds"] > BUCKET_CANDIDATES_SECONDS[0]).any()),
+        # additivity-limit check: does a one-minute slice sit inside the duration
+        # range the order-level square-root law was actually scored on (section 1)?
+        "proxy_metaorder_duration_n": int(len(all_durations)),
+        "proxy_metaorder_duration_median_seconds": float(np.median(all_durations)),
+        "proxy_metaorder_duration_q25_seconds": float(np.percentile(all_durations, 25)),
+        "proxy_metaorder_duration_q75_seconds": float(np.percentile(all_durations, 75)),
+        # volume-aware family: considered, not built; see the module docstring
+        "volume_aware_family_included": False,
+        "volume_aware_family_reason": (
+            "sqrt_rate median OOS R2 -0.257 on 15 sessions, negative, "
+            "reports/conditional_impact_corrected/model_comparison.csv"
+        ),
     }]).to_csv(out_dir / "methodology.csv", index=False)
 
     input_manifest(sessions).to_csv(out_dir / "input_manifest.csv", index=False)
@@ -705,6 +759,11 @@ def build(out_dir: Path) -> None:
     if len(event):
         print(f"\n{EVENT_DAY_SESSION} (flagged event day) spearman rho: "
               f"{float(event.spearman_rho.iloc[0]):.3f}")
+
+    print(f"\nheld-out proxy metaorder duration (n={len(all_durations)}): "
+          f"median {np.median(all_durations):.1f}s, IQR "
+          f"[{np.percentile(all_durations, 25):.1f}s, "
+          f"{np.percentile(all_durations, 75):.1f}s] vs one {SLICE_SECONDS}s slice")
 
     print(f"\nsaved -> {out_dir}")
 

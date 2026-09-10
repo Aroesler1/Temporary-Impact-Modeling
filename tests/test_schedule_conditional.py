@@ -64,19 +64,23 @@ def test_slice_depths_are_negligible_next_to_realistic_slice_sizes():
 
 
 def test_kkt_risk_neutral_matches_the_closed_form_on_a_synthetic_profile():
-    """Risk-neutral optimum for a_t*x^0.5 must be proportional to V_t/sigma_t^2."""
+    """Risk-neutral optimum for a_t*x^0.5, with the validated model's own
+    normaliser a_t = c_hat*sigma_D*m(t)/sqrt(V_D), must be proportional to
+    1/m(t)^2: V_D and sigma_D are session-level constants, so only the
+    time-of-day multiplier m(t) survives into the allocation shape."""
     rng = np.random.default_rng(1)
     n = 60
-    sigma_t = rng.uniform(0.005, 0.03, n)
-    v_t = rng.uniform(1e3, 1e6, n)
+    m_t = rng.uniform(0.3, 3.0, n)          # time-of-day multiplier
     c_hat = 0.9
-    a_t = c_hat * sigma_t / np.sqrt(v_t)
+    sigma_d = 0.015
+    session_volume = 2e7                    # V_D, the daily normaliser
+    a_t = c_hat * sigma_d * m_t / np.sqrt(session_volume)
     order_size = 5e4
 
     schedules, _, _ = build_schedules(a_t, 0.5, order_size, sigma_per_slice=1e-4)
     x = schedules["kkt_risk_neutral"]
 
-    closed_form = v_t / sigma_t**2
+    closed_form = 1.0 / m_t**2
     closed_form = order_size * closed_form / closed_form.sum()
     np.testing.assert_allclose(x, closed_form, rtol=1e-6)
 
@@ -271,6 +275,30 @@ def test_model_bucket_coefficient_scales_with_the_time_of_day_multiplier():
     assert got == pytest.approx(3.0)
 
 
+def test_model_and_realised_pricing_share_the_daily_normaliser():
+    """model_cost_per_share (a_t = c_hat*sigma_t/sqrt(V_D)) and
+    realised_cost_per_share (k*sigma_D*sqrt(x/V_D)) must price the SAME
+    schedule identically once the realised coefficient equals the model's own
+    c_hat*m(t): both now divide by V_D and nothing else, so optimisation and
+    pricing share one cost function. This is the defect the branch's first
+    version had (a_t divided by a per-slice V_t instead) and does not
+    reproduce."""
+    rng = np.random.default_rng(9)
+    x = rng.uniform(10.0, 1000.0, 20)
+    sigma_d = 0.02
+    session_volume = 5e7
+    m_t = rng.uniform(0.5, 2.0, 20)
+    c_hat = 0.7
+    sigma_t = sigma_d * m_t
+
+    a_t = c_hat * sigma_t / np.sqrt(session_volume)          # this script's a_t
+    k_t = c_hat * m_t                                        # model_bucket_coefficient's own formula
+
+    model = model_cost_per_share(x, a_t)
+    realised = realised_cost_per_share(x, k_t, sigma_d, session_volume)
+    assert model == pytest.approx(realised, rel=1e-10)
+
+
 def test_saving_pct_is_positive_when_the_schedule_is_cheaper():
     assert saving_pct(benchmark_cost=1.0, schedule_cost=0.8) == pytest.approx(20.0)
     assert saving_pct(benchmark_cost=1.0, schedule_cost=1.2) == pytest.approx(-20.0)
@@ -307,6 +335,23 @@ def test_evaluate_schedule_session_reproduces_the_committed_sqrt_tod_prior_c():
     assert set(result.model_costs) == set(result.realised_costs)
 
 
+def test_evaluate_schedule_session_returns_one_duration_per_held_out_order():
+    """test_order_durations backs the README's additivity-limit check: it must
+    be one non-negative duration per held-out proxy metaorder, not per slice."""
+    _, prior = build_profiles()
+    volume_profiles = build_causal_volume_profiles()
+    result = evaluate_schedule_session("MSFT_2024-06-03", prior, volume_profiles)
+
+    bars = panel.bars("MSFT_2024-06-03")
+    orders = panel.metaorders("MSFT_2024-06-03")
+    orders = orders[(orders.mid_start > 0) & (orders.shares > 0)].copy()
+    _, test_orders, _ = ci.split_orders_for_evaluation(
+        bars, orders, train_frac=panel.TRAIN_FRAC)
+
+    assert len(result.test_order_durations) == len(test_orders)
+    assert (result.test_order_durations >= 0).all()
+
+
 def test_event_day_is_flagged():
     _, prior = build_profiles()
     volume_profiles = build_causal_volume_profiles()
@@ -330,6 +375,20 @@ def test_pooled_summary_recomputes_from_schedule_savings():
         assert int(row.n_sessions) == len(values)
         assert row.median_saving_pct == pytest.approx(float(np.median(values)))
         assert int(row.n_sessions_beats_benchmark) == int((values > 0).sum())
+
+
+def test_methodology_records_the_additivity_and_volume_aware_decisions():
+    """methodology.csv must carry the proxy-metaorder duration stats (the
+    additivity-limit check) and record that no volume-aware family was built,
+    with a reason a reader can check against model_comparison.csv."""
+    methodology = pd.read_csv(REPORTS / "methodology.csv").iloc[0]
+    assert bool(methodology["volume_aware_family_included"]) is False
+    assert "sqrt_rate" in str(methodology["volume_aware_family_reason"])
+    assert 0 < methodology["proxy_metaorder_duration_median_seconds"] < 23_400
+    assert (methodology["proxy_metaorder_duration_q25_seconds"]
+            <= methodology["proxy_metaorder_duration_median_seconds"]
+            <= methodology["proxy_metaorder_duration_q75_seconds"])
+    assert methodology["proxy_metaorder_duration_n"] > 0
 
 
 def test_input_manifest_hashes_match_committed_files():
