@@ -66,14 +66,17 @@ def bars_with_ofi(session: str) -> pd.DataFrame:
 
 
 @lru_cache(maxsize=32)
-def fine_bars(session: str, bin_ms: int = 100) -> pd.DataFrame:
+def fine_bars(session: str, bin_ms: int = 100, root: Path | None = None) -> pd.DataFrame:
     """Sub-second bars, if they have been built.
 
-    These are NOT committed: 100 ms bars for the panel run to about 170 MB, well
-    past what belongs in a repository. `DATA.md` carries the one command that
-    rebuilds them from the local MBO extracts.
+    These are NOT committed: 100 ms bars for the panel come to about 60 MB
+    (60,038,738 bytes for the fifteen sessions), roughly twice everything else
+    under `data/`. `DATA.md` carries the one command that rebuilds them from the
+    local MBO extracts. `root` points at a directory holding them elsewhere;
+    by default they are read from `data/bars_<bin_ms>ms/`.
     """
-    path = DATA / f"bars_{bin_ms}ms" / f"{session}_{bin_ms}ms.csv"
+    folder = Path(root) if root is not None else DATA / f"bars_{bin_ms}ms"
+    path = folder / f"{session}_{bin_ms}ms.csv"
     if not path.exists():
         raise FileNotFoundError(
             f"{path} not found. Build it with:\n"

@@ -6,8 +6,9 @@ For a snapshot of the ten displayed levels, the virtual cost of a marketable
 buy of x shares is the volume-weighted price it would pay minus the mid at the
 instant before it arrives. It is a property of DISPLAYED liquidity at an
 instant: no hidden size, no queue refill, no adverse selection, no time. It is
-a LOWER BOUND on realised impact, and it lives in a different section of the
-README from the metaorder results on purpose.
+not a general bound on realised impact, since refill, hidden size and price
+moves can push realised cost either way, and it is reported separately from
+the metaorder results on purpose.
 
 x is capped by displayed depth. A snapshot contributes to size x only if its
 ten levels hold at least x shares, so the fit is valid strictly inside the

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Execution scheduling under the validated conditional-impact model.
 
-The old propagator-based schedule (section 4 of the README) is withdrawn:
+The old propagator-based schedule (docs/audit_history.md) is withdrawn:
 its return-fitted kernel measured returns, not surviving price level, and
 `docs/kernel_audit.md` limits the corrected level response to two seconds.
 Nothing here uses a decay kernel, a transient/permanent split, or any horizon
@@ -26,7 +26,7 @@ PRE-REGISTERED CHOICES (fixed here, before any saving number was computed)
   `allocate_schedule_risk_averse`, the KKT/bisection scheduler this script
   reuses, are written in minute units natively (`sigma_per_minute`, "Optimal
   minute allocation"); one-minute slices are the granularity that solver
-  already assumes. The held-out window is ~117-119 minutes on all twelve
+  already assumes. The held-out window is 116 to 118 minutes on all twelve
   sessions (checked below), far above `MIN_SLICES`; the fallback that halves
   the granularity if a session ever came up short is implemented but is not
   exercised by this panel, which the printed report states explicitly.
@@ -97,7 +97,7 @@ the held-out metaorders alone, not the model). No schedule here was executed;
 nothing is a realised execution cost. The sample is twelve symbol-days on
 three names in 2024, the same panel as the rest of this repository, and
 carries no population or regime claim. INTC 2024-08-02 is the post-earnings
-event day flagged throughout this README and is flagged again below.
+event day flagged throughout the write-up and is flagged again below.
 
 Applying an order-level square-root law slice by slice assumes slice costs
 ADD across the schedule (`sum_t a_t x_t^1.5`), the Almgren-Chriss
@@ -325,8 +325,8 @@ def choose_bucket_coefficients(
     Falls back to the whole held-out window as a single bucket if even two
     hours is too fine. `conditional_impact.fit_sqrt_coefficient` is reused
     unchanged for each bucket's coefficient: sigma_D is the plain daily
-    constant here, not the time-of-day profile, matching the task's own
-    "sigma_D sqrt(Q/V)" and keeping this check independent of the fitted
+    constant here, not the time-of-day profile, matching the plain
+    "sigma_D sqrt(Q/V)" form and keeping this check independent of the fitted
     model's time-of-day shape.
     """
     starts = test_orders["t_start"].to_numpy(float)
@@ -478,9 +478,9 @@ def evaluate_schedule_session(
     realised_costs = {name: realised_cost_per_share(x, k_per_slice, sigma_d, session_volume)
                       for name, x in schedules.items()}
 
-    # duration of each held-out proxy metaorder, for the additivity-limit check in
-    # README section 5: whether one-minute slices sit inside the range the
-    # order-level square-root law was actually scored on (section 1).
+    # duration of each held-out proxy metaorder, for the additivity-limit check
+    # in section 5 of docs/detailed_results.md: whether one-minute slices sit
+    # inside the range the order-level square-root law was scored on (section 1).
     durations = (test_orders["t_end"] - test_orders["t_start"]).to_numpy(float)
 
     return SessionSchedule(
@@ -510,7 +510,7 @@ def bootstrap_median_by_session(values: np.ndarray, sessions: np.ndarray,
     The repo's existing bootstraps (`execution.bootstrap_saving`,
     `scripts.run_conditional_impact.band`) resample whole symbol-days for a
     MEAN; this keeps the same by-session resampling and swaps in the median,
-    since that is the pooled statistic asked for here.
+    since that is the pooled statistic reported here.
     """
     values = np.asarray(values, float)
     sessions = np.asarray(sessions)

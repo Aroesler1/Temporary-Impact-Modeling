@@ -1,0 +1,2 @@
+n_sessions,median_test_over_train,median_sqrt_slope,pearson_ratio_slope,spearman_ratio_slope
+15,0.632754545665169,0.5194560911294898,0.6782509389502913,0.16785714285714282

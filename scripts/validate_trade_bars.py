@@ -15,10 +15,11 @@ exponent:
    reset daily, so a six-month file contains collisions across days that are not
    duplicates at all, and the check below is per session for that reason.
 
-Both are checked against the five AAPL sessions whose MBO-derived one-second
-bars are committed. The MBO series counts DISPLAYED fills only, so the two will
-not be equal: the trades schema also carries hidden prints. Correlation and the
-displayed share are what the check is on.
+Both are checked against the AAPL sessions whose MBO-derived one-second bars
+are committed and which fall inside the trades window (three of the five:
+2024-04-01, 2024-06-03 and 2024-08-01). The MBO series counts DISPLAYED fills
+only, so the two will not be equal: the trades schema also carries hidden
+prints. Correlation and the displayed share are what the check is on.
 
 Usage:
     python scripts/validate_trade_bars.py --symbol AAPL

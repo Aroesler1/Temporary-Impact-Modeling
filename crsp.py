@@ -1,7 +1,7 @@
 """Offline CRSP consolidated normalisers and identifier validation.
 
-Licensed rows stay in the external cache created by the single approved WRDS
-session. This module never imports a vendor client and never opens a socket.
+Licensed rows stay in the external cache created by a single WRDS session.
+This module never imports a vendor client and never opens a socket.
 """
 from __future__ import annotations
 

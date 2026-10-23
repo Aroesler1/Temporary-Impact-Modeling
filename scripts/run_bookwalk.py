@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Refit the original functional form on Databento MBP-10, rigorously.
 
-Everything the earlier work-trial fit skipped: no bucket filtering, every
+Everything the original July 2025 study's fit skipped: no bucket filtering, every
 normalisation reported rather than one chosen, five candidate forms scored by
 leave-one-symbol-day-out cross-validation and AIC rather than by eye, robust
 standard errors, a block bootstrap by symbol-day, and a likelihood profile that
@@ -112,7 +112,7 @@ def main() -> int:
           "differs across them, and a cost in\n    half-spreads varies snapshot "
           "by snapshot, so both reweight the pooled fit.")
     print(f"  range across all nine: {norm_table.exponent.min():.3f} to "
-          f"{norm_table.exponent.max():.3f}. The work-trial figure of 0.45 sits "
+          f"{norm_table.exponent.max():.3f}. The original study's figure of 0.45 sits "
           f"inside that\n  range, which is the point: it was one cell of this "
           f"table reported as the answer.")
 

@@ -17,8 +17,9 @@ measure the VIRTUAL instantaneous cost of consuming visible liquidity.
 Realized metaorder impact additionally reflects hidden liquidity, queue
 refill, and adverse selection, and empirically scales with participation
 of traded volume (the square-root law, impact ~ sigma * sqrt(Q/V)). The
-piecewise model calibrated here is a displayed-liquidity lower bound, not
-a fitted metaorder impact curve.
+piecewise model calibrated here describes displayed liquidity only. It is
+not a fitted metaorder impact curve and not a general bound on realised
+cost, which refill and hidden size can move in either direction.
 """
 
 from __future__ import annotations
@@ -118,7 +119,7 @@ class LiquiditySplineFit:
 def _bspline_design_matrix(x: np.ndarray, full_knots: np.ndarray, degree: int) -> np.ndarray:
     """Dense B-spline basis matrix, scipy only, matching patsy's `bs()`.
 
-    `notebook/Work_Trial_Task.ipynb` built its basis with
+    `notebook/original_execution_study.ipynb` built its basis with
     `patsy.dmatrix("bs(x, knots=..., degree=3, include_intercept=True)", ...)`.
     `scipy.interpolate.BSpline.design_matrix` implements the same de Boor
     basis given the same padded knot vector and is bit-for-bit identical to
@@ -144,9 +145,8 @@ def fit_intraday_liquidity_profile(
 ) -> LiquiditySplineFit:
     """Penalized cubic B-spline smoothing of minute-level average depth D_t.
 
-    Ports the notebook's P-spline cell (`notebook/Work_Trial_Task.ipynb`,
-    "modeled intraday liquidity with penalized B-splines" in the resume) to
-    scipy only, no new dependency. Same recipe as the notebook:
+    Ports the notebook's P-spline cell (`notebook/original_execution_study.ipynb`)
+    to scipy only, no new dependency. Same recipe as the notebook:
 
     1. a cubic B-spline basis (`degree=3`) with six interior knots, default
        `[60, 114, ..., 330]` minutes since the open, matching a standard

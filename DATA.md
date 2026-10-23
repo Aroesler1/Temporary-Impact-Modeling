@@ -1,6 +1,24 @@
 # Data provenance
 
-Everything published here rests on one vendor source and one entitlement.
+## What is committed, in one paragraph
+
+Only derived data. No raw vendor file is in this repository: no Databento
+`.dbn.zst` extract (MBO, MBP-10, trades or daily bars), no LOBSTER message
+stream or reconstructed order book, no CRSP or other WRDS rows, and none of the
+original July 2025 study's proprietary quote CSVs. What is committed is computed
+from those sources: one-second bars per session (signed and unsigned displayed
+volume and the last mid in each second), proxy metaorders per session (sign,
+shares, fill count, start and end time, mid before and after), one-second order
+flow imbalance, binned ten-level book-walk costs, per-session scales (trailing
+ADV and volatility, spread, depth, traded volume), the cross-section's sample
+list with June 2024 daily summary statistics, and the fitted results under
+`reports/`. Raw extracts stay outside the repository under `$DATABENTO_RAW_DIR`
+and the CRSP cache under `$IMPACT_CRSP_CACHE_DIR`.
+
+## Sources
+
+The fifteen-session panel rests on one vendor source and one entitlement; the
+cross-section adds a CRSP consolidated-volume check, described below.
 
 **Databento `XNAS.ITCH`**, MBO and MBP-10, accessed under the Berkeley MFE
 programme account, which covers the dataset outright. Fifteen symbol-days on
@@ -11,8 +29,8 @@ written into the repository: they live under `$DATABENTO_RAW_DIR` in the layout
 
 shared with the sibling `lob-engine-cpp` checkout so one pull serves both repos.
 
-The work-trial MBP-10 snapshots (SOUN, FROG, CRWV) that the original notebook
-used are proprietary to their provider. They are gitignored, no published result
+The MBP-10 snapshots (SOUN, FROG, CRWV) used by the original July 2025 study
+are proprietary to their provider. They are gitignored, no published result
 depends on them any longer, and their figures have been removed from the README.
 
 ## Session selection
@@ -82,7 +100,7 @@ preserves the exponent; observation-varying normalisers can change it.
 
 ## What is committed
 
-Derived aggregates only, about 28 MB in all.
+Derived aggregates only, about 31 MB in all.
 
 | path | what | rows |
 |---|---|---|
@@ -94,25 +112,27 @@ Derived aggregates only, about 28 MB in all.
 | `data/daily_reference.csv` | trailing 20-day ADV and close-to-close volatility per session | 15 |
 | `data/session_volume.csv` | deduplicated displayed, hidden and total traded volume | 15 |
 | `data/session_meta.csv` | every scale constant the run scripts normalise by | 15 |
-| `reports/` | the tables in the README, as written by the run scripts | |
+| `reports/` | the tables in the README and `docs/detailed_results.md`, as written by the run scripts | |
 
 Nothing under `data/` is raw vendor data. No file contains a credential.
 
 ### Not committed: the 100 ms bars
 
-`data/bars_100ms/` is gitignored. Fifteen sessions at 100 ms come to **57 MB**,
-against 28 MB for everything else here combined, which is past what belongs in a
-repository. Rebuilding it from the local MBO extracts takes **613 seconds of
-wall clock**:
+`data/bars_100ms/` is gitignored. Fifteen sessions at 100 ms come to about
+60 MB (60,038,738 bytes; per-file sizes and SHA-256 hashes are in
+`reports/kernel_100ms/input_manifest.csv`), against about 31 MB for everything
+else here combined, which is past what belongs in a repository. Rebuild it from
+the local MBO extracts, then rerun the fits:
 
 ```bash
 python scripts/build_all_sessions.py --bin-ms 100 --out-dir data/bars_100ms
+python scripts/run_kernel_100ms.py      # or --bars-dir /path/to/bars_100ms
 ```
 
 `--bin-ms` defaults to 1000, and at that default the builder reproduces the
 committed one-second series byte for byte, including the integer dtype of the
 `sec` column. A test asserts it. The fitted 100 ms kernels ARE committed, in
-`reports/kernel_100ms/`, so the result in section 4 of the README can be read
+`reports/kernel_100ms/`, so the result in `docs/audit_history.md` can be read
 without rebuilding anything.
 
 ## Rebuilding from raw
@@ -121,22 +141,22 @@ Four steps, all scripted, and the whole panel takes a few minutes:
 
 ```bash
 pip install -r requirements-extract.txt
-export DATABENTO_RAW_DIR=~/Data/databento/XNAS.ITCH
+export DATABENTO_RAW_DIR=/path/to/databento/XNAS.ITCH
 export LOB_ENGINE_REPO=~/path/to/lob-engine-cpp
 
 python scripts/fetch_sessions.py                  # prices the plan, downloads nothing
 python scripts/fetch_sessions.py --confirm        # aborts if get_cost is not $0
 python scripts/fetch_daily_reference.py --confirm
-python scripts/build_all_sessions.py              # MBO -> messages -> L1 book -> bars + metaorders
-python scripts/build_all_sessions.py --bin-ms 100 --out-dir data/bars_100ms   # optional, 613 s, 57 MB
+python scripts/build_all_sessions.py --force      # MBO -> messages -> L1 book -> bars + metaorders
+python scripts/build_all_sessions.py --bin-ms 100 --out-dir data/bars_100ms   # optional, about 60 MB
 python scripts/build_bookwalk.py                  # MBP-10 -> ladder cost bins
 python scripts/build_ofi_bars.py                  # MBP-10 -> one-second OFI
 python scripts/build_volume_tally.py
 python scripts/build_session_meta.py
 ```
 
-`build_all_sessions.py` rebuilds MSFT 2024-06-03 through the same four steps as
-the fourteen new sessions and diffs the result against the committed series. It
+`build_all_sessions.py --force` rebuilds MSFT 2024-06-03 through the same four
+steps as the fourteen new sessions and diffs the result against the committed series. It
 prints **IDENTICAL**, which is what establishes that the panel is built on the
 convention the earlier published results were built on. If it ever prints
 DIFFERS, the run stops.
@@ -170,8 +190,9 @@ having builders at all.
 ## Licence and retention
 
 Databento data is accessed under a programme licence; only small derived
-aggregates are published. The work-trial data is proprietary to its provider and
-is neither published nor relied upon for any stated result.
+aggregates are published. The original July 2025 study's quote data is
+proprietary to its provider and is neither published nor relied upon for any
+stated result.
 
 ---
 
@@ -243,7 +264,8 @@ For 110 symbols over 126 trading days that would be nearly 14,000 files and
 ## Two things measured about the trades schema, not assumed
 
 Both are in `reports/cross_section/trades_validation.csv`, checked against the
-five AAPL sessions whose MBO-derived bars are committed.
+three committed AAPL sessions that fall inside the trades window (2024-04-01,
+2024-06-03 and 2024-08-01).
 
 1. **The aggressor side convention is the OPPOSITE of MBO's.** On MBO an
    execution's `side` is the side of the RESTING order, which is why
@@ -258,8 +280,9 @@ five AAPL sessions whose MBO-derived bars are committed.
    `build_volume_tally.py` handles on MBO does not arise here, because the
    trades schema carries the print once.
 
-Between 17% and 22% of AAPL prints carry no side at all, about 32% of RTH
-volume. Those are the hidden prints. They count toward `volume` and toward V_D,
+On those sessions, between 17% and 22% of AAPL prints carry no side at all, and
+prints missing from the displayed MBO tally are 24% to 32% of RTH volume. Those
+are the hidden prints. They count toward `volume` and toward V_D,
 because they are traded volume, and not toward `signed_vol`, because their
 direction is unknown. The direction-dominance filter therefore has them in its
 denominator, which is the conservative direction.
@@ -294,8 +317,8 @@ files). Pooled they are close because most of the 108 names are not
 Nasdaq-listed and Nasdaq does not run a comparable closing cross for a
 non-Nasdaq-listed name; the ratio moves a lot (RTH-continuous 4.77 to
 full-day 2.94, for example) for the Nasdaq-listed minority, AAPL and KHC
-included. See the README's "Consolidated normaliser" section for the full
-breakdown by `crsp_exchcd`. `build_venue_definitions.py` applies the same
+included. See "Consolidated normaliser" in section 7 of `docs/detailed_results.md` for
+the full breakdown by `crsp_exchcd`. `build_venue_definitions.py` applies the same
 minimum-trade-count and finite-volatility session filter
 `build_cross_section_metaorders.py` does, but does not require a session to
 have produced a metaorder; it finds 13,716 qualifying symbol-days against the
@@ -304,7 +327,7 @@ the volume filter but yield no proxy metaorder.
 Observation-varying normalisers may change the fitted exponent as well;
 invariance requires a common constant rescaling.
 
-**Completed consolidated normaliser.** One approved foreground WRDS session on
+**Completed consolidated normaliser.** One WRDS session on
 2026-09-08 resolved identifiers from `crsp.dsenames` and cached CIZ daily rows
 from `crsp.dsf_v2`. Volume is in shares. On 7,040 overlapping symbol-days it
 matches the independently cached `EQUS.SUMMARY` consolidated volume at a median
@@ -344,7 +367,7 @@ numerical library differences and are below published headline precision.
 ## The penalized B-spline liquidity profile
 
 `impact_model.fit_intraday_liquidity_profile` ports the notebook's P-spline
-cell (`notebook/Work_Trial_Task.ipynb`: a penalized cubic B-spline, six
+cell (`notebook/original_execution_study.ipynb`: a penalized cubic B-spline, six
 interior knots, roughness penalty chosen by generalized cross-validation,
 fitted to the minute-level average of first-level depth D_t) to scipy only,
 so it needs nothing beyond `requirements.txt`. It is tested against synthetic
@@ -355,8 +378,8 @@ offline, not part of this repo's test suite since patsy is not a project
 dependency).
 
 **No minute-level depth series is committed to feed it.** The notebook's
-`avg_dt` came from the work-trial MBP-10 snapshots (SOUN, FROG, CRWV) noted
-above: proprietary to their provider, gitignored, and gone. The fifteen-session
+`avg_dt` came from the original study's MBP-10 snapshots (SOUN, FROG, CRWV)
+noted above: proprietary to their provider, gitignored, and gone. The fifteen-session
 Databento panel this repository does commit derived series for
 (`data/session_meta.csv`) carries only a per-session MEDIAN first-level ask
 depth, not a minute grid. Reconstructing a real `avg_dt` would mean pulling
@@ -388,7 +411,8 @@ same-symbol prior session under `sqrt_tod_prior`, section 1's validated
 model, through the KKT/bisection allocator already in `impact_model.py`. No
 kernel, no propagator, no transient/permanent split. Built and verified by
 `python scripts/run_schedule_conditional.py --check`; the method, the
-pre-registered choices, and the numbers are in README section 5.
+pre-registered choices, and the numbers are in section 5 of
+`docs/detailed_results.md`.
 
 | path | what | rows |
 |---|---|---|

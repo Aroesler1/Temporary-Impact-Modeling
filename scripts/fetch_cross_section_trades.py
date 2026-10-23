@@ -141,6 +141,11 @@ def main() -> int:
     total = sum(raw_path(s, root).stat().st_size for s in symbols
                 if raw_path(s, root).exists())
     print(f"\n{done} symbols on disk, {total / 1e9:.2f} GB compressed")
+    # record the on-disk size beside the billable size so the quoted figure
+    # traces to a committed file
+    manifest = pd.read_csv(args.out)
+    manifest["on_disk_bytes"] = int(total)
+    manifest.to_csv(args.out, index=False)
     return 0
 
 

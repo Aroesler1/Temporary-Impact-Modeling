@@ -1,7 +1,9 @@
-# Everything the tests, the fitters and the run scripts need. All of it is
-# already implied by the code that was here before this branch.
-numpy          # arrays; every fitter is vectorised over them
-pandas         # the derived series and every report table are DataFrames
-scipy          # least_squares for the weighted nonlinear fits, minimize for Almgren-Chriss
-matplotlib     # the exponent profile and schedule figures
-pytest         # the test suite
+# Everything the tests, the fitters and the run scripts need. Pinned to the
+# versions the full suite and every --check verifier pass with on Python 3.13
+# (the CI version). The --check verifiers compare floats with tolerances, but
+# pinning keeps rebuilt tables and figures reproducible.
+numpy==2.5.4        # arrays; every fitter is vectorised over them
+pandas==3.1.0       # the derived series and every report table are DataFrames
+scipy==1.18.1       # least_squares for the weighted nonlinear fits, minimize for Almgren-Chriss
+matplotlib==3.11.2  # the exponent profile and schedule figures
+pytest==9.1.1       # the test suite

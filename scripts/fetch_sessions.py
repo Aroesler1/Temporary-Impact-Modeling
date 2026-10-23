@@ -61,8 +61,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if not os.environ.get("DATABENTO_API_KEY"):
-        print("DATABENTO_API_KEY is not set (it lives in ~/.zshrc; use `zsh -ic`)",
-              file=sys.stderr)
+        print("DATABENTO_API_KEY is not set", file=sys.stderr)
         return 1
 
     import databento as db

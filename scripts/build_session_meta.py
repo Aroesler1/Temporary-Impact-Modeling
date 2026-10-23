@@ -6,11 +6,10 @@ and volatility), the book scales from the MBP-10 pass, and the traded volume
 implied by the reconstructed metaorders, so that no run script has to hardcode
 a session volume the way `run_metaorder_impact.py` used to.
 
-`displayed_volume` is the sum of displayed fills inside RTH, which is what the
-metaorder reconstruction sees and therefore the right denominator for a
-participation rate built from it. It is NOT the consolidated tape and it is not
-even the whole Nasdaq session, since hidden prints are excluded; the column name
-says which.
+`displayed_volume` is the sum of displayed fills over the whole 04:00-20:00
+extract, which is what the metaorder reconstruction sees. It excludes hidden
+prints and is NOT the consolidated tape; the column name says which. The
+participation denominator, `session_volume`, adds the hidden prints back.
 
 Usage:
     python scripts/build_session_meta.py

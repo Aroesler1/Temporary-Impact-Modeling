@@ -1,17 +1,19 @@
 .DS_Store
 **/.DS_Store
 
-# Do not commit work trial data / artifacts
+# Local folders holding the original study's proprietary quote data
 Work_Trial/
 work_trial/
 
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
 
 .venv/
 
-# Cross-agent working notes. Kept locally, not published: it is scratch context
-# for whoever picks the work up next, not part of the repo.
+# Local working notes. Kept locally, not published: scratch context, not part
+# of the repo.
 handoff.md
 data/bars_100ms/
 data/cross_section/metaorders/

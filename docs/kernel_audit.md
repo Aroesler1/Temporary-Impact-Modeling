@@ -3,7 +3,7 @@
 Scope: the already published fifteen symbol-days of MSFT, INTC and AAPL in
 2024. This is an algebraic audit of committed fitted aggregates, not a new
 holdout experiment, a new fit, or a causal impact estimate. The issue and the
-first cumulative values were found during the read-only review. They are not
+first cumulative values were found during a code review. They are not
 retrospectively described as a preregistered hypothesis.
 
 Before implementing the correction, the required falsifiable checks were fixed:

@@ -3,9 +3,31 @@
 from __future__ import annotations
 
 import argparse
+import io
 from pathlib import Path
 
 import pandas as pd
+
+# read_csv's float parser can differ by one ulp across pandas versions (the 2.x
+# fast parser against 3.x round-trip parsing), so --check compares parsed
+# values with a tolerance far below any published precision, not raw bytes
+FLOAT_RTOL = 1e-12
+FLOAT_ATOL = 1e-15
+
+
+def matches(target: Path, rebuilt_csv: bytes) -> bool:
+    """True when the committed CSV equals the rebuilt one up to float round-off."""
+    if not target.exists():
+        return False
+    stored = pd.read_csv(target)
+    rebuilt = pd.read_csv(io.BytesIO(rebuilt_csv))
+    try:
+        pd.testing.assert_frame_equal(
+            stored, rebuilt, check_exact=False, rtol=FLOAT_RTOL, atol=FLOAT_ATOL
+        )
+    except AssertionError:
+        return False
+    return True
 
 
 def build(report_dir: Path) -> pd.DataFrame:
@@ -88,13 +110,9 @@ def main() -> int:
     ).to_csv(index=False).encode()
     volume_target = args.report_dir / "volume_source_summary.csv"
     if args.check:
-        if (
-            not target.exists()
-            or target.read_bytes() != expected
-            or not volume_target.exists()
-            or volume_target.read_bytes() != volume_summary
-        ):
-            raise SystemExit(f"{target} is stale")
+        for path, rebuilt in ((target, expected), (volume_target, volume_summary)):
+            if not matches(path, rebuilt):
+                raise SystemExit(f"{path} is stale")
     else:
         target.write_bytes(expected)
         volume_target.write_bytes(volume_summary)

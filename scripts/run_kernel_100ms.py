@@ -8,10 +8,15 @@ relaxation horizon. See docs/kernel_audit.md for the withdrawn interpretation.
 
 This expensive raw-cache path is not needed for the committed audit:
     python scripts/audit_kernel_response.py --check
+
+The 100 ms bars are not committed. Build them with
+`scripts/build_all_sessions.py --bin-ms 100` or point `--bars-dir` at a copy:
+    python scripts/run_kernel_100ms.py --bars-dir /path/to/bars_100ms
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 import warnings
 from pathlib import Path
@@ -53,15 +58,22 @@ def band(rows: np.ndarray, n_boot: int = 4000, seed: int = 0) -> np.ndarray:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--bin-ms", type=int, default=100)
+    ap.add_argument("--bars-dir", type=Path, default=None,
+                    help="folder holding <SESSION>_<bin>ms.csv; default data/bars_<bin>ms")
     ap.add_argument("--out-dir", type=Path, default=Path("reports/kernel_100ms"))
     ap.add_argument("--figs-dir", type=Path, default=Path("figs"))
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     args.figs_dir.mkdir(parents=True, exist_ok=True)
 
-    rows, shapes = [], []
+    bars_dir = args.bars_dir or panel.DATA / f"bars_{args.bin_ms}ms"
+    rows, shapes, inputs = [], [], []
     for key in panel.session_keys():
-        bars = panel.fine_bars(key, args.bin_ms)
+        bars = panel.fine_bars(key, args.bin_ms, args.bars_dir)
+        source = Path(bars_dir) / f"{key}_{args.bin_ms}ms.csv"
+        # the bars are not committed, so record what was read
+        inputs.append({"file": source.name, "bytes": source.stat().st_size,
+                       "sha256": hashlib.sha256(source.read_bytes()).hexdigest()})
         report = calibrate(bars)
         predictive = calibrate(bars, drop_contemporaneous=True)
         shape = fit_shape(bars, report.best.delta, N_SHAPE_LAGS)
@@ -83,6 +95,7 @@ def main() -> int:
 
     summary = pd.DataFrame(rows)
     summary.to_csv(args.out_dir / "per_session.csv", index=False)
+    pd.DataFrame(inputs).to_csv(args.out_dir / "input_manifest.csv", index=False)
     print(f"PROPAGATOR ON {args.bin_ms} ms BARS, same 70/30 split, same "
           f"(delta, L) selection\n")
     print(summary.to_string(index=False, float_format=lambda v: f"{v:0.5f}"))
@@ -129,48 +142,70 @@ def main() -> int:
         "median_validation_history_gain": float(summary.history_gain.median()),
     }]).to_csv(args.out_dir / "return_response_diagnostics.csv", index=False)
 
-    _figure(shape_table, shapes, summary, args.bin_ms,
+    _figure(shape_table, shapes, args.bin_ms,
             args.figs_dir / f"kernel_{args.bin_ms}ms.png")
     print(f"\nsaved -> {args.out_dir} and "
           f"{args.figs_dir / f'kernel_{args.bin_ms}ms.png'}")
     return 0
 
 
-def _figure(table: pd.DataFrame, shapes: np.ndarray, summary: pd.DataFrame,
-            bin_ms: int, path: Path) -> None:
+def level_response(return_shapes: np.ndarray) -> np.ndarray:
+    """Cumulative level response R(l)/R(0) from normalised return coefficients.
+
+    A return coefficient b(l) is a further price change at lag l, so the price
+    displacement still standing at lag l is the running sum of b(0..l). Summing
+    commutes with averaging over sessions, so the mean of the per-session
+    levels equals the running sum of the mean shape.
+    """
+    return np.cumsum(np.asarray(return_shapes, dtype=float), axis=-1)
+
+
+def _figure(table: pd.DataFrame, shapes: np.ndarray | None, bin_ms: int,
+            path: Path) -> list[str]:
+    """Return coefficients and the cumulative level response they imply.
+
+    The left panel is what the regression estimates. The right panel is the
+    surviving price displacement, which is the quantity an execution model
+    needs; its band is omitted because the committed marginal bands do not
+    identify covariance across lags. Returns the panel titles.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.2))
     lags = table.lag.to_numpy()
-    for row, key in zip(shapes, summary.session):
-        axes[0].plot(lags, row, lw=0.7, alpha=0.35, color="grey")
+    mean_shape = table.mean_G_over_G0.to_numpy(float)
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.2))
+    if shapes is not None:
+        for row in shapes:
+            axes[0].plot(lags, row, lw=0.7, alpha=0.35, color="grey")
+            axes[1].plot(lags, level_response(row), lw=0.7, alpha=0.35, color="grey")
     axes[0].fill_between(lags, table.band_lo, table.band_hi, alpha=0.25,
-                         color="#1f4e79", label="95% band by symbol-day")
-    axes[0].plot(lags, table.mean_G_over_G0, lw=2.0, color="#1f4e79",
+                         color="#1f4e79", label="marginal 95% band by symbol-day")
+    axes[0].plot(lags, mean_shape, lw=2.0, color="#1f4e79",
                  label="mean over 15 symbol-days")
     axes[0].axhline(0.0, color="black", lw=0.8)
     axes[0].set_xlabel(f"lag, in {bin_ms} ms bins")
-    axes[0].set_ylabel("b(l) / b(0), return response")
-    axes[0].set_title(f"Kernel shape at {bin_ms} ms\n"
+    axes[0].set_ylabel("b(l) / b(0)")
+    axes[0].set_title(f"Return coefficients at {bin_ms} ms\n"
                       "grey lines are individual symbol-days")
     axes[0].legend(fontsize=8)
     axes[0].grid(alpha=0.3)
 
-    axes[1].fill_between(lags[1:], table.band_lo[1:], table.band_hi[1:],
-                         alpha=0.25, color="#b03a2e")
-    axes[1].plot(lags[1:], table.mean_G_over_G0[1:], lw=2.0, marker="o",
-                 ms=3.5, color="#b03a2e")
-    axes[1].axhline(0.0, color="black", lw=0.8)
+    axes[1].plot(lags, level_response(mean_shape), lw=2.0, marker="o", ms=3.5,
+                 color="#b03a2e", label="mean over 15 symbol-days")
+    axes[1].axhline(1.0, color="black", lw=0.8, ls=":")
     axes[1].set_xlabel(f"lag, in {bin_ms} ms bins")
-    axes[1].set_ylabel("b(l) / b(0), return response")
-    axes[1].set_title("Lags 1 and beyond, rescaled\n"
-                      "a band straddling zero is no memory")
+    axes[1].set_ylabel("R(l) / R(0) = sum of b(0..l) / b(0)")
+    axes[1].set_title("Cumulative level response\n"
+                      "descriptive mean, no joint confidence band")
+    axes[1].legend(fontsize=8)
     axes[1].grid(alpha=0.3)
+    titles = [ax.get_title() for ax in axes]
     plt.tight_layout()
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
+    return titles
 
 
 if __name__ == "__main__":

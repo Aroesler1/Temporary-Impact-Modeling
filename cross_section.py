@@ -3,8 +3,9 @@
 SCOPE, WHICH IS NARROW ON PURPOSE
 ---------------------------------
 S&P 500 members on 2024-06-28, Nasdaq venue only, April to September 2024. That
-is large caps, one venue, one half-year, and ordinary days. It is not a
-market-wide statement and this module does not make one.
+is large caps, one venue and one half-year, with scheduled macro announcement
+days left in rather than filtered out. It is not a market-wide statement and
+this module does not make one.
 
 WHY STRATIFY AT ALL
 -------------------
@@ -110,9 +111,10 @@ def aggressor_sign(side: np.ndarray) -> np.ndarray:
     with no negation.
 
     Measured, not assumed: signed volume built the resting way correlates
-    -0.9999 with the MBO-derived series on all five committed AAPL sessions, and
-    +0.9999 built this way. A flipped sign would invert every metaorder in the
-    study and still produce a plausible-looking exponent, so
+    -0.9999 with the MBO-derived series on the three committed AAPL sessions
+    inside the trades window, and +0.9998 to +0.9999 built this way. A flipped
+    sign would invert every metaorder in the study and still produce a
+    plausible-looking exponent, so
     `scripts/validate_trade_bars.py` runs the check and refuses to pass on
     anything between -0.9 and +0.9.
     """

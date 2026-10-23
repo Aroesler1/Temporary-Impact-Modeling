@@ -73,6 +73,6 @@ def raw_root() -> Path:
     if not root:
         raise SystemExit(
             "DATABENTO_RAW_DIR is not set. It must point at the shared raw "
-            "directory, e.g. ~/Data/databento/XNAS.ITCH. Raw vendor paths are "
+            "directory, e.g. /path/to/databento/XNAS.ITCH. Raw vendor paths are "
             "never committed.")
     return Path(root).expanduser()
