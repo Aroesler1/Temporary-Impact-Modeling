@@ -20,15 +20,18 @@ built from Nasdaq trades, April to September 2024.
   by a time-of-day profile from the same stock's prior sessions reaches a median
   out-of-sample R² of 0.206 and a calibration slope of 0.955 (12 sessions that
   have a prior session). The same law with a constant daily σ scores -0.327 with
-  slope 0.519 on all 15. [model_comparison.csv](reports/conditional_impact_corrected/model_comparison.csv)
+  slope 0.519 on all 15. Fitting the exponent instead of fixing it at ½ puts it
+  at a median 0.47 (0.39 to 0.52) and adds nothing measurable: R² 0.207, better
+  on 7 of 12 sessions, with a symbol-day band for the gain of [-0.004, +0.009].
+  [model_comparison.csv](reports/conditional_impact_corrected/model_comparison.csv)
 - **Explaining versus predicting.** Flow in the same second explains 0.198 to
   0.542 of one-second returns; flow from earlier seconds explains -0.0010 to
   +0.0056. [per_session.csv](reports/panel/per_session.csv)
 - **Impact exponent across 108 stocks.** On 1,017,071 proxy metaorders the
   pooled exponent is δ = 0.309 [0.306, 0.313], and 101 of the 108 per-stock
-  bootstrap bands exclude 0.5. The order-level cost model above fixes the
-  exponent at ½ and fits only c; fitted freely on these proxy metaorders, the
-  exponent comes out lower. [pooled_fits.csv](reports/cross_section/pooled_fits.csv),
+  bootstrap bands exclude 0.5. The order-level fit above, which predicts
+  individual held-out orders in three stocks, puts the exponent nearer ½.
+  [pooled_fits.csv](reports/cross_section/pooled_fits.csv),
   [per_stock_fits.csv](reports/cross_section/per_stock_fits.csv)
 - **Tick size does not explain the low exponent.** In a cross-sectional
   regression, relative tick size has t = -1.10 and dollar volume t = +7.19.
@@ -55,11 +58,12 @@ built from Nasdaq trades, April to September 2024.
    every parameter, including hyperparameters, is fitted inside the first 70%;
    orders starting in the last 30% are scored on realised against predicted
    impact with no refit.
-3. Compare cost models. Eight models compete: a distributed-lag propagator
+3. Compare cost models. Ten models compete: a distributed-lag propagator
    (raw and with a fitted level) and the square-root law with daily, trailing
    or blended volatility, with a participation-rate term, or with a time-of-day
    volatility profile built from the stock's earlier sessions only or from all
-   of its other sessions.
+   of its other sessions. The two time-of-day models are also run with the
+   exponent fitted instead of fixed at ½.
 4. Fit the displayed book. Walking ten levels every second gives the cost of
    a marketable order by size. Five functional forms are fitted by weighted
    nonlinear least squares with robust errors, leave-one-day-out CV and a block
@@ -97,7 +101,7 @@ also smoothed intraday depth with a penalized B-spline. Both are ported to
 
 | Path | Contents |
 |---|---|
-| `conditional_impact.py` | the eight order-level cost models, scored out of sample |
+| `conditional_impact.py` | the ten order-level cost models, scored out of sample |
 | `impact_model.py` | piecewise model, P-spline depth curve, KKT/bisection and Almgren-Chriss allocators |
 | `bookwalk.py` | displayed-book cost curve, candidate forms, WNLS, CV, bootstrap, likelihood profile |
 | `propagator.py`, `kernel_response.py`, `execution.py` | distributed-lag return response, return-to-level conversion, level-kernel execution algebra |

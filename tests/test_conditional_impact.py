@@ -103,6 +103,36 @@ def test_fit_sqrt_coefficient_recovers_a_known_c():
         c_true, rel=0.02)
 
 
+def test_fit_power_coefficient_recovers_a_known_exponent():
+    rng = np.random.default_rng(3)
+    n, volume = 6000, 1e7
+    shares = np.exp(rng.uniform(np.log(10), np.log(1e5), n))
+    sigma = rng.uniform(0.01, 0.03, n)
+    c_true, delta_true = 0.8, 0.37
+    impact = c_true * sigma * (shares / volume) ** delta_true
+    orders = pd.DataFrame({"sign": np.ones(n), "shares": shares,
+                           "mid_start": np.full(n, 100.0),
+                           "mid_end": 100.0 * np.exp(impact)})
+    delta, c = ci.fit_power_coefficient(orders, volume, sigma)
+    assert delta == pytest.approx(delta_true, abs=0.005)
+    assert c == pytest.approx(c_true, rel=0.03)
+
+
+def test_fit_power_coefficient_matches_the_square_root_fit_at_one_half():
+    """On square-root data the freed exponent lands on 1/2 and c on the fixed
+    fit's c, so a score difference between the two models is the exponent alone."""
+    rng = np.random.default_rng(4)
+    n, volume, sigma = 5000, 1e7, 0.02
+    shares = np.exp(rng.uniform(np.log(10), np.log(1e5), n))
+    impact = 0.6 * sigma * np.sqrt(shares / volume)
+    orders = pd.DataFrame({"sign": np.ones(n), "shares": shares,
+                           "mid_start": np.full(n, 100.0),
+                           "mid_end": 100.0 * np.exp(impact)})
+    delta, c = ci.fit_power_coefficient(orders, volume, sigma)
+    assert delta == pytest.approx(0.5, abs=0.005)
+    assert c == pytest.approx(ci.fit_sqrt_coefficient(orders, volume, sigma), rel=0.02)
+
+
 def test_fit_scale_recovers_a_known_multiple():
     pred = np.linspace(1.0, 10.0, 200)
     assert ci.fit_scale(pred, 3.5 * pred) == pytest.approx(3.5)
@@ -334,10 +364,11 @@ def test_evaluate_session_scores_every_model_it_is_given_data_for():
     result = ci.evaluate_session("SYNTH", bars, orders, 1e7, 0.02,
                                  tod_profile_loso=profile)
     for name in ("propagator", "propagator_scaled", "sqrt", "sqrt_trailing_sigma",
-                 "sqrt_blend", "sqrt_tod_loso", "sqrt_rate"):
+                 "sqrt_blend", "sqrt_tod_loso", "sqrt_rate", "power_tod_loso"):
         assert name in result.scores
         assert np.isfinite(result.r2(name))
-    # no prior-session donor was supplied, so that model must be absent rather
+    # no prior-session donor was supplied, so those models must be absent rather
     # than silently scored against a default
     assert "sqrt_tod_prior" not in result.scores
+    assert "power_tod_prior" not in result.scores
     assert result.n_test > 0

@@ -5,7 +5,7 @@ The headline number of the propagator section: given an order's size and the
 seconds it executed over, how close was the predicted impact to the realised
 one, on orders the model never saw.
 
-Eight models, every parameter fitted on the first 70% of the session and applied
+Ten models, every parameter fitted on the first 70% of the session and applied
 unchanged to the last 30%. The two time-of-day profiles are estimated from OTHER
 sessions of the same symbol, never from the scored one, and never across
 symbols.
@@ -262,6 +262,11 @@ def build(out_dir: Path) -> None:
     print(f"  top-decile calibration ratio: sqrt {pooled['sqrt'].ratio.iloc[-1]:.4f}"
           f"   sqrt_rate {pooled['sqrt_rate'].ratio.iloc[-1]:.4f}"
           f"   propagator_scaled {pooled['propagator_scaled'].ratio.iloc[-1]:.4f}")
+
+    for name in ("power_tod_loso", "power_tod_prior"):
+        fitted = summary[f"{name}_delta"].dropna()
+        print(f"\n{name} exponent: median {fitted.median():.3f}, range "
+              f"{fitted.min():.3f} to {fitted.max():.3f} over {len(fitted)} sessions")
 
     print(f"\nblend alpha: mean {summary.blend_alpha.mean():.3f}, "
           f"range {summary.blend_alpha.min():.3f} to {summary.blend_alpha.max():.3f} "

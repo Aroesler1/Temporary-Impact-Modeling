@@ -62,6 +62,7 @@ training window only:
                       term of Zarinelli, Treccani, Farmer and Lillo (2015,
                       arXiv 1412.2152), with rate = Q over the volume traded
                       during the order's own execution window
+    power_tod         sqrt_tod with the exponent fitted instead of fixed at 1/2
 
 The time-of-day multiplier cannot come from the scored session's own training
 window, because the training window is the first 70% of the day and every
@@ -230,6 +231,49 @@ def predict_sqrt(orders: pd.DataFrame, c: float, session_volume: float,
                  sigma_d: float | np.ndarray) -> np.ndarray:
     return c * np.asarray(sigma_d, float) * np.sqrt(
         orders["shares"].to_numpy(float) / session_volume)
+
+
+DELTA_BOUNDS = (0.0, 1.5)
+
+
+def fit_power_coefficient(orders: pd.DataFrame, session_volume: float,
+                          sigma: float | np.ndarray,
+                          n_grid: int = 301) -> tuple[float, float]:
+    """delta and c in I = c sigma (Q / V)^delta, minimising the training SSE.
+
+    The square-root law with its exponent freed. c is linear given delta, so it
+    is profiled out exactly and only delta is searched: a grid over
+    `DELTA_BOUNDS`, then a bounded refinement inside the best grid cell. Same
+    point-error objective as `fit_sqrt_coefficient`, so at delta = 1/2 the two
+    give the same c and any difference in score is the exponent alone.
+    """
+    from scipy.optimize import minimize_scalar
+
+    y = realised_impact(orders)
+    q = orders["shares"].to_numpy(float) / session_volume
+    sig = np.broadcast_to(np.asarray(sigma, float), q.shape)
+    ok = np.isfinite(y) & np.isfinite(q) & np.isfinite(sig) & (q > 0) & (sig > 0)
+    y, q, sig = y[ok], q[ok], sig[ok]
+
+    def profile(delta: float) -> tuple[float, float]:
+        x = sig * q ** delta
+        c = float(np.sum(x * y) / np.sum(x ** 2))
+        return c, float(np.sum((y - c * x) ** 2))
+
+    grid = np.linspace(*DELTA_BOUNDS, n_grid)
+    best = int(np.argmin([profile(d)[1] for d in grid]))
+    step = grid[1] - grid[0]
+    lo, hi = max(grid[best] - step, DELTA_BOUNDS[0]), min(grid[best] + step, DELTA_BOUNDS[1])
+    res = minimize_scalar(lambda d: profile(d)[1], bounds=(lo, hi), method="bounded",
+                          options={"xatol": 1e-10})
+    delta = float(res.x) if profile(res.x)[1] <= profile(grid[best])[1] else float(grid[best])
+    return delta, profile(delta)[0]
+
+
+def predict_power(orders: pd.DataFrame, c: float, delta: float, session_volume: float,
+                  sigma: float | np.ndarray) -> np.ndarray:
+    return c * np.asarray(sigma, float) * (
+        orders["shares"].to_numpy(float) / session_volume) ** delta
 
 
 HALF_HOUR = 1800
@@ -455,15 +499,16 @@ def calibration_table(realised: np.ndarray, predicted: np.ndarray,
 
 
 MODEL_ORDER = ("propagator", "propagator_scaled", "sqrt", "sqrt_trailing_sigma",
-               "sqrt_blend", "sqrt_tod_loso", "sqrt_tod_prior", "sqrt_rate")
+               "sqrt_blend", "sqrt_tod_loso", "sqrt_tod_prior", "sqrt_rate",
+               "power_tod_loso", "power_tod_prior")
 
 
 @dataclass
 class SessionResult:
     """Every model scored on one symbol-day, keyed by name.
 
-    A dict rather than a field per model: there are eight of them now and adding
-    the ninth should not mean touching the dataclass, the constructor and the
+    A dict rather than a field per model: there are ten of them now and adding
+    the eleventh should not mean touching the dataclass, the constructor and the
     runner in three places.
     """
     session: str
@@ -588,6 +633,20 @@ def evaluate_session(session: str, bars: pd.DataFrame, orders: pd.DataFrame,
     params["rate_delta"] = rate_fit.delta
     params["rate_k"] = rate_fit.k
     params["rate_median_test"] = float(np.median(rate_test))
+
+    # 9 and 10: the time-of-day models with the exponent fitted, not fixed at 1/2,
+    # so the contrast against sqrt_tod_* is the exponent and nothing else
+    for name, profile in (("power_tod_loso", tod_profile_loso),
+                          ("power_tod_prior", tod_profile_prior)):
+        if profile is None or profile.empty:
+            continue
+        sig_tr = profile_sigma(sigma_d, profile, train_start)
+        sig_te = profile_sigma(sigma_d, profile, test_start)
+        delta_tod, c_tod = fit_power_coefficient(train_orders, session_volume, sig_tr)
+        predictions[name] = predict_power(test_orders, c_tod, delta_tod,
+                                          session_volume, sig_te)
+        params[f"{name}_c"] = c_tod
+        params[f"{name}_delta"] = delta_tod
 
     return SessionResult(
         session=session, calibration=cal,

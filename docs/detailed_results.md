@@ -86,7 +86,8 @@ in `reports/conditional_impact/` as historical evidence. Rebuild and compare
 the corrected files with
 `python scripts/run_conditional_impact.py --check`.
 The exclusions do not change the four headline rows above at their displayed precision;
-across all eight models, the largest absolute change in median R² is 0.00033.
+across the eight models that have a pre-repair counterpart, the largest absolute
+change in median R² is 0.00033.
 That stability is a corrected reproduction result, not an assumption that the
 old files survived the cutoff repair. Version 3 also fixes numerical tie handling
 in calibration bins: integer midpoint ranks keep 12-significant-digit ties
@@ -170,6 +171,8 @@ unscored.
 | **square root, time-of-day (loso)** | 15 | 0.176 | [0.160, 0.238] | 0.834 | 1.011 |
 | **square root, time-of-day (prior only)** | 12 | 0.206 | [0.160, 0.255] | 0.955 | 1.097 |
 | square root, rate term | 15 | -0.257 | [-0.331, -0.008] | 0.569 | 0.669 |
+| power law, time-of-day (loso), exponent fitted | 15 | 0.183 | [0.160, 0.237] | 0.909 | 1.027 |
+| power law, time-of-day (prior only), exponent fitted | 12 | 0.207 | [0.166, 0.255] | 1.031 | 1.128 |
 
 **The time-of-day profile wins, and the blend loses to the row it was built
 from.** Three things to read off it.
@@ -192,6 +195,27 @@ from.** Three things to read off it.
   in the window it is not fitted on. This is a clean example of an in-sample
   criterion selecting the wrong model for an out-of-sample job, and it is
   reported because it went the wrong way.
+
+### Should the exponent be fitted
+
+The time-of-day rows fix the exponent at ½ and fit only c. The last two rows
+free it: `I = c σ_t (Q/V)^δ`, with c and δ both fitted on the training window
+and σ_t the same time-of-day volatility. The fitted δ has a median of **0.471**
+on the 12 strictly causal sessions (range 0.392 to 0.518) and 0.484 on all 15
+(0.392 to 0.539), just under ½.
+
+Out of sample the extra parameter buys nothing measurable. On the strictly
+causal variant the median R² moves from 0.206 to 0.207; the fitted version is
+better on 7 of 12 sessions, by a mean of 0.003, and the symbol-day bootstrap
+band for that gain is [-0.004, +0.009]. The leave-one-session-out pair is the
+same (7 of 15, mean +0.0002). The median slope moves from 0.955 to 1.031 and
+the top-decile ratio from 1.097 to 1.128, so neither calibration measure
+improves cleanly. Fixing δ at ½ is kept as the headline because it matches the
+fitted value and needs one parameter instead of two. Section 3's binned
+estimator answers a different question, the shape of the law across size bins,
+and gives a lower exponent on the same metaorders.
+Source: `reports/conditional_impact_corrected/summary.csv`, columns
+`power_tod_*_delta` and `*_r2`.
 
 ### Does the rate of execution matter
 
