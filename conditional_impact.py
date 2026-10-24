@@ -243,30 +243,46 @@ def fit_power_coefficient(orders: pd.DataFrame, session_volume: float,
 
     The square-root law with its exponent freed. c is linear given delta, so it
     is profiled out exactly and only delta is searched: a grid over
-    `DELTA_BOUNDS`, then a bounded refinement inside the best grid cell. Same
-    point-error objective as `fit_sqrt_coefficient`, so at delta = 1/2 the two
-    give the same c and any difference in score is the exponent alone.
+    `DELTA_BOUNDS`, then the root of the profiled SSE's derivative inside the
+    best grid cell. Same point-error objective as `fit_sqrt_coefficient`, so at
+    delta = 1/2 the two give the same c and any difference in score is the
+    exponent alone.
+
+    The root, not a minimiser: the SSE is flat at its minimum, so a minimiser
+    only pins delta to about 1e-8 and lands differently on different platforms,
+    while the derivative crosses zero cleanly and brentq pins it near machine
+    precision. That keeps the committed reports reproducible under --check.
     """
-    from scipy.optimize import minimize_scalar
+    from scipy.optimize import brentq
 
     y = realised_impact(orders)
     q = orders["shares"].to_numpy(float) / session_volume
     sig = np.broadcast_to(np.asarray(sigma, float), q.shape)
     ok = np.isfinite(y) & np.isfinite(q) & np.isfinite(sig) & (q > 0) & (sig > 0)
     y, q, sig = y[ok], q[ok], sig[ok]
+    log_q = np.log(q)
 
     def profile(delta: float) -> tuple[float, float]:
         x = sig * q ** delta
         c = float(np.sum(x * y) / np.sum(x ** 2))
         return c, float(np.sum((y - c * x) ** 2))
 
+    def stationarity(delta: float) -> float:
+        # SSE(delta) = sum y^2 - A^2 / B with A = sum x y and B = sum x^2, so
+        # dSSE/ddelta is zero exactly where 2 B dA - A dB is
+        x = sig * q ** delta
+        a, b = np.sum(x * y), np.sum(x ** 2)
+        da, db = np.sum(x * y * log_q), 2.0 * np.sum(x ** 2 * log_q)
+        return float(2.0 * b * da - a * db)
+
     grid = np.linspace(*DELTA_BOUNDS, n_grid)
     best = int(np.argmin([profile(d)[1] for d in grid]))
-    step = grid[1] - grid[0]
-    lo, hi = max(grid[best] - step, DELTA_BOUNDS[0]), min(grid[best] + step, DELTA_BOUNDS[1])
-    res = minimize_scalar(lambda d: profile(d)[1], bounds=(lo, hi), method="bounded",
-                          options={"xatol": 1e-10})
-    delta = float(res.x) if profile(res.x)[1] <= profile(grid[best])[1] else float(grid[best])
+    lo, hi = grid[max(best - 1, 0)], grid[min(best + 1, n_grid - 1)]
+    if stationarity(lo) * stationarity(hi) < 0:
+        delta = float(brentq(stationarity, lo, hi, xtol=1e-15, rtol=4 * np.finfo(float).eps))
+    else:
+        # optimum on a bound of DELTA_BOUNDS: report the bound
+        delta = float(grid[best])
     return delta, profile(delta)[0]
 
 
