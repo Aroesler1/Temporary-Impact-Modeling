@@ -896,12 +896,12 @@ for the hypothesis, the RAW bivariate relationship runs the other way: the
 middle panel of the figure fits a slope of **+0.052 per decade** of relative
 tick size, so before controls delta RISES as the tick gets bigger.
 
-The sign flip between raw and controlled is the whole story. Relative tick size
+The key result is the sign flip between the raw and controlled fits. Relative tick size
 and dollar volume are strongly negatively correlated, and **dollar volume is the
 variable that actually explains delta** (t = +7.19, and t = +11.54 for the
 prefactor). Once liquidity is held fixed the tick coefficient collapses to noise.
-What varies across this cross-section is not how big the tick is, it is how much
-trades.
+What varies across this cross-section is how much each stock trades, not how big
+its tick is.
 
 The pooled fits say the same thing from the other side:
 

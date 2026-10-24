@@ -26,7 +26,9 @@ built from Nasdaq trades, April to September 2024.
   +0.0056. [per_session.csv](reports/panel/per_session.csv)
 - **Impact exponent across 108 stocks.** On 1,017,071 proxy metaorders the
   pooled exponent is δ = 0.309 [0.306, 0.313], and 101 of the 108 per-stock
-  bootstrap bands exclude 0.5. [pooled_fits.csv](reports/cross_section/pooled_fits.csv),
+  bootstrap bands exclude 0.5. The order-level cost model above fixes the
+  exponent at ½ and fits only c; fitted freely on these proxy metaorders, the
+  exponent comes out lower. [pooled_fits.csv](reports/cross_section/pooled_fits.csv),
   [per_stock_fits.csv](reports/cross_section/per_stock_fits.csv)
 - **Tick size does not explain the low exponent.** In a cross-sectional
   regression, relative tick size has t = -1.10 and dollar volume t = +7.19.
@@ -54,9 +56,10 @@ built from Nasdaq trades, April to September 2024.
    orders starting in the last 30% are scored on realised against predicted
    impact with no refit.
 3. Compare cost models. Eight models compete: a distributed-lag propagator
-   (raw and with a fitted level) and the square-root law with daily, trailing,
-   blended or time-of-day volatility, or with a participation-rate term.
-   Time-of-day profiles come only from other sessions of the same stock.
+   (raw and with a fitted level) and the square-root law with daily, trailing
+   or blended volatility, with a participation-rate term, or with a time-of-day
+   volatility profile built from the stock's earlier sessions only or from all
+   of its other sessions.
 4. Fit the displayed book. Walking ten levels every second gives the cost of
    a marketable order by size. Five functional forms are fitted by weighted
    nonlinear least squares with robust errors, leave-one-day-out CV and a block
